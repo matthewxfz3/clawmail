@@ -46,13 +46,8 @@ variable "domain" {
   type        = string
 }
 
-variable "mailgun_smtp_user" {
-  description = "Mailgun SMTP username"
-  type        = string
-}
-
-variable "mailgun_smtp_password" {
-  description = "Mailgun SMTP password"
+variable "sendgrid_api_key" {
+  description = "Twilio SendGrid API key used as SMTP password (username is always 'apikey')"
   type        = string
   sensitive   = true
 }

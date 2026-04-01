@@ -77,8 +77,7 @@ load_config() {
     CLAWMAIL_DOMAIN
     CLAWMAIL_STALWART_ADMIN_PASSWORD
     CLAWMAIL_DB_PASSWORD
-    CLAWMAIL_MAILGUN_SMTP_USER
-    CLAWMAIL_MAILGUN_SMTP_PASSWORD
+    CLAWMAIL_SENDGRID_API_KEY
     CLAWMAIL_MCP_API_KEYS
   )
   local missing=0
@@ -153,8 +152,7 @@ tf_vars() {
     "-var=domain=${CLAWMAIL_DOMAIN}" \
     "-var=stalwart_admin_password=${CLAWMAIL_STALWART_ADMIN_PASSWORD}" \
     "-var=db_password=${CLAWMAIL_DB_PASSWORD}" \
-    "-var=mailgun_smtp_user=${CLAWMAIL_MAILGUN_SMTP_USER}" \
-    "-var=mailgun_smtp_password=${CLAWMAIL_MAILGUN_SMTP_PASSWORD}" \
+    "-var=sendgrid_api_key=${CLAWMAIL_SENDGRID_API_KEY}" \
     "-var=mcp_api_key=${CLAWMAIL_MCP_API_KEYS}" \
     "-var=mcp_server_image=${IMAGE_URL}"
 }
@@ -291,8 +289,7 @@ DB_PASSWORD=${CLAWMAIL_DB_PASSWORD}
 GCS_BUCKET=${GCS_BUCKET}
 GCS_ACCESS_KEY=\$(gcloud secrets versions access latest --secret=gcs-hmac-access-key 2>/dev/null || echo '')
 GCS_SECRET_KEY=\$(gcloud secrets versions access latest --secret=gcs-hmac-secret-key 2>/dev/null || echo '')
-MAILGUN_SMTP_USER=${CLAWMAIL_MAILGUN_SMTP_USER}
-MAILGUN_SMTP_PASSWORD=${CLAWMAIL_MAILGUN_SMTP_PASSWORD}
+SENDGRID_API_KEY=${CLAWMAIL_SENDGRID_API_KEY}
 STALWART_ADMIN_SECRET=${CLAWMAIL_STALWART_ADMIN_PASSWORD}
 EOF
 

@@ -23,8 +23,7 @@ services:
       - GCS_BUCKET=local-dev   # not used locally but required by config
       - GCS_ACCESS_KEY=dev
       - GCS_SECRET_KEY=dev
-      - MAILGUN_SMTP_USER=dev
-      - MAILGUN_SMTP_PASSWORD=dev
+      - SENDGRID_API_KEY=dev-placeholder
       - STALWART_ADMIN_SECRET=admin123
     depends_on:
       postgres:

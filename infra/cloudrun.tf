@@ -43,20 +43,10 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
       }
 
       env {
-        name = "MAILGUN_SMTP_USER"
+        name = "SENDGRID_API_KEY"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.secrets["mailgun-smtp-user"].secret_id
-            version = "latest"
-          }
-        }
-      }
-
-      env {
-        name = "MAILGUN_SMTP_PASSWORD"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.secrets["mailgun-smtp-password"].secret_id
+            secret  = google_secret_manager_secret.secrets["sendgrid-api-key"].secret_id
             version = "latest"
           }
         }

@@ -14,8 +14,7 @@ resource "google_project_service" "secretmanager" {
 locals {
   secrets = {
     "stalwart-admin-password" = var.stalwart_admin_password
-    "mailgun-smtp-user"       = var.mailgun_smtp_user
-    "mailgun-smtp-password"   = var.mailgun_smtp_password
+    "sendgrid-api-key"        = var.sendgrid_api_key
     "db-password"             = var.db_password
     "mcp-api-key"             = var.mcp_api_key
   }

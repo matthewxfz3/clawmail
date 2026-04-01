@@ -1,4 +1,5 @@
 node_modules/
+deploy/config.sh
 dist/
 .env
 *.tfvars

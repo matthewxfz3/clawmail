@@ -40,12 +40,13 @@ export CLAWMAIL_STALWART_ADMIN_PASSWORD="changeme-use-something-strong"
 export CLAWMAIL_DB_PASSWORD="changeme-use-something-strong"
 
 # -----------------------------------------------------------------------------
-# Mailgun — outbound SMTP relay
+# Twilio SendGrid — outbound SMTP relay
 # Required: GCP blocks outbound port 25.
-# Get these from: https://app.mailgun.com/mg/sending/domains
+# Create a free account at sendgrid.com → Settings → API Keys → Create Key
+# (Full Access or Restricted with "Mail Send" permission)
+# The username is always the literal string "apikey".
 # -----------------------------------------------------------------------------
-export CLAWMAIL_MAILGUN_SMTP_USER="postmaster@mg.yourdomain.com"
-export CLAWMAIL_MAILGUN_SMTP_PASSWORD="your-mailgun-smtp-password"
+export CLAWMAIL_SENDGRID_API_KEY="SG.your-sendgrid-api-key"
 
 # -----------------------------------------------------------------------------
 # MCP server API keys

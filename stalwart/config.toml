@@ -7,8 +7,7 @@
 #   GCS_BUCKET           — GCS bucket name (accessed via S3-compatible API)
 #   GCS_ACCESS_KEY       — HMAC access key for GCS S3-compatible API
 #   GCS_SECRET_KEY       — HMAC secret key for GCS S3-compatible API
-#   MAILGUN_SMTP_USER    — Mailgun SMTP username (e.g. postmaster@mg.yourdomain.com)
-#   MAILGUN_SMTP_PASSWORD — Mailgun SMTP password
+#   SENDGRID_API_KEY     — Twilio SendGrid API key (used as SMTP password, username is literal "apikey")
 #   STALWART_ADMIN_SECRET — Password for the built-in admin account
 
 # ---------------------------------------------------------------------------
@@ -74,20 +73,22 @@ lookup    = "postgresql"
 directory = "postgresql"
 
 # ---------------------------------------------------------------------------
-# Outbound relay — Mailgun (GCP blocks direct port-25 egress)
+# Outbound relay — Twilio SendGrid (GCP blocks direct port-25 egress)
+# SMTP username is always the literal string "apikey".
+# SMTP password is your SendGrid API key.
 # ---------------------------------------------------------------------------
-[remote."mailgun"]
-address = "smtp.mailgun.org"
+[remote."sendgrid"]
+address = "smtp.sendgrid.net"
 port = 587
 tls.implicit = false
-auth.username = "%{env:MAILGUN_SMTP_USER}%"
-auth.secret   = "%{env:MAILGUN_SMTP_PASSWORD}%"
+auth.username = "apikey"
+auth.secret   = "%{env:SENDGRID_API_KEY}%"
 
 [queue.outbound.tls]
 starttls = "require"
 
 [queue.routing]
-default = "mailgun"
+default = "sendgrid"
 
 # ---------------------------------------------------------------------------
 # Rate limiting — outbound sends capped per sender domain
