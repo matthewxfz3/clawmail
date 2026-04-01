@@ -26,3 +26,8 @@ output "dns_name_servers" {
   description = "Name servers for the Cloud DNS managed zone — delegate your domain to these"
   value       = google_dns_managed_zone.clawmail.name_servers
 }
+
+output "artifact_registry_url" {
+  description = "Docker image base URL for the Clawmail MCP server"
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/clawmail/mcp-server"
+}
