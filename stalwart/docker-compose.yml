@@ -1,0 +1,53 @@
+version: '3.9'
+
+# Local development stack — no GCP required.
+# Copy .env.example to .env and adjust values, then:
+#   docker compose up -d
+
+services:
+  stalwart:
+    image: stalwartlabs/mail-server:latest
+    container_name: stalwart
+    ports:
+      - "25:25"
+      - "143:143"
+      - "587:587"
+      - "8080:8080"
+    volumes:
+      - ./config.toml:/opt/stalwart-mail/etc/config.toml:ro
+      - stalwart-data:/opt/stalwart-mail/data
+    environment:
+      - DOMAIN=localhost
+      - DB_HOST=postgres
+      - DB_PASSWORD=stalwart
+      - GCS_BUCKET=local-dev   # not used locally but required by config
+      - GCS_ACCESS_KEY=dev
+      - GCS_SECRET_KEY=dev
+      - MAILGUN_SMTP_USER=dev
+      - MAILGUN_SMTP_PASSWORD=dev
+      - STALWART_ADMIN_SECRET=admin123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: clawmail-postgres
+    environment:
+      POSTGRES_DB: stalwart
+      POSTGRES_USER: stalwart
+      POSTGRES_PASSWORD: stalwart
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stalwart"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+volumes:
+  stalwart-data:
+  postgres-data:

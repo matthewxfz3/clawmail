@@ -1,0 +1,148 @@
+# Stalwart Mail Server — Clawmail configuration
+#
+# Required environment variables:
+#   DOMAIN               — the mail hostname, e.g. mail.clawmail.ai
+#   DB_HOST              — Cloud SQL (PostgreSQL) host/IP
+#   DB_PASSWORD          — PostgreSQL password for the stalwart user
+#   GCS_BUCKET           — GCS bucket name (accessed via S3-compatible API)
+#   GCS_ACCESS_KEY       — HMAC access key for GCS S3-compatible API
+#   GCS_SECRET_KEY       — HMAC secret key for GCS S3-compatible API
+#   MAILGUN_SMTP_USER    — Mailgun SMTP username (e.g. postmaster@mg.yourdomain.com)
+#   MAILGUN_SMTP_PASSWORD — Mailgun SMTP password
+#   STALWART_ADMIN_SECRET — Password for the built-in admin account
+
+# ---------------------------------------------------------------------------
+# Server identity
+# ---------------------------------------------------------------------------
+[server]
+hostname = "%{env:DOMAIN}%"
+
+# ---------------------------------------------------------------------------
+# Listeners
+# ---------------------------------------------------------------------------
+[[server.listener]]
+id = "smtp"
+bind = ["0.0.0.0:25"]
+protocol = "smtp"
+
+[[server.listener]]
+id = "submission"
+bind = ["0.0.0.0:587"]
+protocol = "smtp"
+tls.implicit = false
+
+[[server.listener]]
+id = "imap"
+bind = ["0.0.0.0:143"]
+protocol = "imap"
+
+[[server.listener]]
+id = "jmap"
+bind = ["0.0.0.0:8080"]
+protocol = "http"
+
+# ---------------------------------------------------------------------------
+# Storage backends
+# ---------------------------------------------------------------------------
+
+# PostgreSQL — primary data store (Cloud SQL in production)
+[store."postgresql"]
+type = "postgresql"
+host = "%{env:DB_HOST}%"
+port = 5432
+database = "stalwart"
+user = "stalwart"
+password = "%{env:DB_PASSWORD}%"
+
+# GCS via S3-compatible API — blob / message body store
+[store."gcs"]
+type = "s3"
+bucket = "%{env:GCS_BUCKET}%"
+endpoint = "https://storage.googleapis.com"
+region = "auto"
+access-key = "%{env:GCS_ACCESS_KEY}%"
+secret-key = "%{env:GCS_SECRET_KEY}%"
+
+# ---------------------------------------------------------------------------
+# Assign storage backends to roles
+# ---------------------------------------------------------------------------
+[storage]
+data      = "postgresql"
+fts       = "postgresql"
+blob      = "gcs"
+lookup    = "postgresql"
+directory = "postgresql"
+
+# ---------------------------------------------------------------------------
+# Outbound relay — Mailgun (GCP blocks direct port-25 egress)
+# ---------------------------------------------------------------------------
+[remote."mailgun"]
+address = "smtp.mailgun.org"
+port = 587
+tls.implicit = false
+auth.username = "%{env:MAILGUN_SMTP_USER}%"
+auth.secret   = "%{env:MAILGUN_SMTP_PASSWORD}%"
+
+[queue.outbound.tls]
+starttls = "require"
+
+[queue.routing]
+default = "mailgun"
+
+# ---------------------------------------------------------------------------
+# Rate limiting — outbound sends capped per sender domain
+# ---------------------------------------------------------------------------
+[[queue.throttle]]
+match       = "sender-domain = '%{env:DOMAIN}%'"
+rate        = "100/1h"
+concurrency = 5
+
+# ---------------------------------------------------------------------------
+# Per-account quotas
+# 1 GB storage / 10 000 messages per mailbox
+# ---------------------------------------------------------------------------
+[quota]
+messages = 10000
+size     = 1073741824  # 1 GiB in bytes
+
+# ---------------------------------------------------------------------------
+# Authentication & directory — virtual users stored in PostgreSQL
+# ---------------------------------------------------------------------------
+[auth.internal]
+directory = "postgresql"
+
+[directory."postgresql"]
+type  = "sql"
+store = "postgresql"
+
+# ---------------------------------------------------------------------------
+# JMAP settings
+# ---------------------------------------------------------------------------
+[jmap]
+directory         = "postgresql"
+store             = "postgresql"
+session.timeout   = "10m"
+
+# ---------------------------------------------------------------------------
+# SMTP inbound settings
+# ---------------------------------------------------------------------------
+[session.ehlo]
+reject-non-fqdn = false
+
+[session.rcpt]
+directory = "postgresql"
+
+# ---------------------------------------------------------------------------
+# Spam filter (basic built-in)
+# ---------------------------------------------------------------------------
+[spam-filter]
+enable = true
+
+# ---------------------------------------------------------------------------
+# Admin account
+# The built-in admin password is read from the environment so it is never
+# stored in plain text in this file.
+# ---------------------------------------------------------------------------
+[auth.master]
+user   = "admin"
+secret = "%{env:STALWART_ADMIN_SECRET}%"
