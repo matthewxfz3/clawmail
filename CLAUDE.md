@@ -155,14 +155,14 @@ npm run build   # verify TypeScript compiles
 
 # Build + push image
 docker buildx build --platform linux/amd64 \
-  -t us-west1-docker.pkg.dev/ai-for-marketing-468406/clawmail/mcp-server:latest \
+  -t us-west1-docker.pkg.dev/<PROJECT_ID>/clawmail/mcp-server:latest \
   --push .
 
 # Deploy
 gcloud run services update clawmail-mcp \
   --region us-west1 \
-  --project ai-for-marketing-468406 \
-  --image us-west1-docker.pkg.dev/ai-for-marketing-468406/clawmail/mcp-server:latest
+  --project <PROJECT_ID> \
+  --image us-west1-docker.pkg.dev/<PROJECT_ID>/clawmail/mcp-server:latest
 ```
 
 The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
@@ -184,7 +184,7 @@ The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
 
 ## GCP project
 
-- **Project:** `ai-for-marketing-468406`
+- **Project:** `<PROJECT_ID>`
 - **Region:** `us-west1`
 - **Stalwart VM IP:** `35.203.162.161` (static)
 - **Stalwart ports accessible:** `8080` (JMAP + Management API, VPC-internal + Cloud Run), `25` (inbound SMTP), `143`/`993` (IMAP)
