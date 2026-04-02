@@ -2,34 +2,20 @@
 
 ## Active
 
-- [ ] **Fix spam filter — emails land in Junk Mail instead of Inbox**
-  SPF includes SendGrid (`include:sendgrid.net` confirmed in DNS). Root issue is likely
-  missing DKIM signing + DMARC alignment. Add SendGrid DKIM CNAME records in Cloud DNS
-  and configure DKIM in SendGrid dashboard for `fridaymailer.com`.
-
-- [ ] **Set up DKIM for `fridaymailer.com`**
-  Generate DKIM key via Stalwart Admin API, publish as TXT record in Cloud DNS.
-  Also add SendGrid DKIM CNAMEs (`s1._domainkey`, `s2._domainkey`) from SendGrid dashboard.
-  Required for email deliverability and to stop spam-scoring.
-
-- [ ] **Verify SendGrid domain auth for `fridaymailer.com`**
-  Add CNAME records from SendGrid dashboard → Cloud DNS.
-  Then update `SENDGRID_VERIFIED_SENDER` env var from `matthew@sanchi.ai` to `noreply@fridaymailer.com`.
-
-- [ ] **Patch existing accounts with `email-receive` permission**
-  All accounts created before today's `createAccount` fix lack the permission.
-  Run: `STALWART_ADMIN_PASSWORD=<pass> bash scripts/patch-email-receive.sh`
-
-- [ ] **Clean up stuck DSN queue messages for `fridaymail.duckdns.org`**
-  4 messages stuck retrying hourly. Delete via:
-  `GET /api/queue/messages?limit=20` → grab IDs → `DELETE /api/queue/message/{id}`.
-
-- [ ] **Write unit tests for `stalwart-mgmt.ts` and `jmap.ts`**
-  No test suite yet. Mock the Stalwart HTTP API and JMAP endpoint.
-  Minimum coverage: `createAccount`, `accountExists`, `listAccounts`, `deleteAccount`, `listEmails`, `readEmail`.
+- [ ] **Set up Stalwart DKIM signing for `fridaymailer.com`**
+  SendGrid domain auth (DKIM/DMARC) is done for outbound via SendGrid relay.
+  Still need Stalwart to sign any directly-delivered mail with its own DKIM key.
+  Generate key via Stalwart API → publish TXT record in Cloud DNS.
 
 ## Completed
 
+- [x] Fix spam filter: SendGrid domain auth for `fridaymailer.com` verified ✅ (DKIM CNAMEs propagated + validated via API)
+- [x] Update `SENDGRID_VERIFIED_SENDER` to `noreply@fridaymailer.com` in Cloud Run (revision 00028)
+- [x] Patch all 17 existing accounts with `email-receive` permission (live against Stalwart VM)
+- [x] Delete 5 stuck DSN queue messages for `fridaymail.duckdns.org`
+- [x] Remove sensitive info from `CLAUDE.md` (VM IP, project hash, GCP project ID, personal email)
+- [x] Remove sensitive info from `docs/debugging-inbound-delivery.md` (same)
+- [x] Write unit tests — 51 tests across `stalwart-mgmt.ts` and `jmap.ts`, all passing
 - [x] Migrate domain from `fridaymail.duckdns.org` → `fridaymailer.com`
 - [x] Create Cloud DNS zone with A, MX, SPF, DMARC records
 - [x] Fix Stalwart v0.15 Docker image (renamed to `stalwartlabs/stalwart`, pushed to Artifact Registry)
@@ -37,6 +23,7 @@
 - [x] Fix `SENDGRID_API_KEY` missing from docker-compose env
 - [x] Fix `createAccount` to include `enabledPermissions: ["email-receive"]` (Stalwart v0.15)
 - [x] Fix JMAP client cache TTL — 5-minute expiry on `userContextCache` and `cachedSession`
+- [x] Add `clearJmapCache()` export for test isolation
 - [x] Add patch script `scripts/patch-email-receive.sh` for existing accounts
 - [x] Add JMAP master-user impersonation to `jmap.ts` (avoids cross-account ACL issues)
 - [x] Add debug JMAP route `/dashboard/debug/jmap?a=email`
