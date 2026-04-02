@@ -26,14 +26,9 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
         value = "http://${google_compute_address.stalwart.address}:8080"
       }
 
-      env {
-        name  = "PORT"
-        value = "8080"
-      }
-
       # Secret-backed environment variables
       env {
-        name = "STALWART_API_KEY"
+        name = "STALWART_ADMIN_PASSWORD"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.secrets["stalwart-admin-password"].secret_id
@@ -47,6 +42,16 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.secrets["sendgrid-api-key"].secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "MCP_API_KEYS"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.secrets["mcp-api-key"].secret_id
             version = "latest"
           }
         }

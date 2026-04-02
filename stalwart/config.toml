@@ -7,7 +7,7 @@
 #   GCS_BUCKET           — GCS bucket name (accessed via S3-compatible API)
 #   GCS_ACCESS_KEY       — HMAC access key for GCS S3-compatible API
 #   GCS_SECRET_KEY       — HMAC secret key for GCS S3-compatible API
-#   SENDGRID_API_KEY     — Twilio SendGrid API key (used as SMTP password, username is literal "apikey")
+#   SENDGRID_API_KEY     — Twilio SendGrid API key (SMTP password; username is always literal "apikey")
 #   STALWART_ADMIN_SECRET — Password for the built-in admin account
 
 # ---------------------------------------------------------------------------
@@ -63,6 +63,13 @@ access-key = "%{env:GCS_ACCESS_KEY}%"
 secret-key = "%{env:GCS_SECRET_KEY}%"
 
 # ---------------------------------------------------------------------------
+# Internal directory — virtual user management backed by PostgreSQL
+# ---------------------------------------------------------------------------
+[directory."internal"]
+type  = "internal"
+store = "postgresql"
+
+# ---------------------------------------------------------------------------
 # Assign storage backends to roles
 # ---------------------------------------------------------------------------
 [storage]
@@ -70,7 +77,7 @@ data      = "postgresql"
 fts       = "postgresql"
 blob      = "gcs"
 lookup    = "postgresql"
-directory = "postgresql"
+directory = "internal"
 
 # ---------------------------------------------------------------------------
 # Outbound relay — Twilio SendGrid (GCP blocks direct port-25 egress)
@@ -84,66 +91,11 @@ tls.implicit = false
 auth.username = "apikey"
 auth.secret   = "%{env:SENDGRID_API_KEY}%"
 
-[queue.outbound.tls]
-starttls = "require"
-
-[queue.routing]
-default = "sendgrid"
-
-# ---------------------------------------------------------------------------
-# Rate limiting — outbound sends capped per sender domain
-# ---------------------------------------------------------------------------
-[[queue.throttle]]
-match       = "sender-domain = '%{env:DOMAIN}%'"
-rate        = "100/1h"
-concurrency = 5
-
-# ---------------------------------------------------------------------------
-# Per-account quotas
-# 1 GB storage / 10 000 messages per mailbox
-# ---------------------------------------------------------------------------
-[quota]
-messages = 10000
-size     = 1073741824  # 1 GiB in bytes
-
-# ---------------------------------------------------------------------------
-# Authentication & directory — virtual users stored in PostgreSQL
-# ---------------------------------------------------------------------------
-[auth.internal]
-directory = "postgresql"
-
-[directory."postgresql"]
-type  = "sql"
-store = "postgresql"
-
-# ---------------------------------------------------------------------------
-# JMAP settings
-# ---------------------------------------------------------------------------
-[jmap]
-directory         = "postgresql"
-store             = "postgresql"
-session.timeout   = "10m"
-
-# ---------------------------------------------------------------------------
-# SMTP inbound settings
-# ---------------------------------------------------------------------------
-[session.ehlo]
-reject-non-fqdn = false
-
-[session.rcpt]
-directory = "postgresql"
-
-# ---------------------------------------------------------------------------
-# Spam filter (basic built-in)
-# ---------------------------------------------------------------------------
-[spam-filter]
-enable = true
-
 # ---------------------------------------------------------------------------
 # Admin account
 # The built-in admin password is read from the environment so it is never
 # stored in plain text in this file.
 # ---------------------------------------------------------------------------
-[auth.master]
+[authentication.fallback-admin]
 user   = "admin"
 secret = "%{env:STALWART_ADMIN_SECRET}%"
