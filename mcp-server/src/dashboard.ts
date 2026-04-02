@@ -704,36 +704,81 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
 // Sub-page: Account inbox
 // ---------------------------------------------------------------------------
 
-async function buildInboxPage(account: string): Promise<string> {
-  const result = await toolListEmails(account, "Inbox", 50);
-  const emails = result.emails;
+async function buildInboxPage(account: string, folder = "Inbox"): Promise<string> {
+  const client = new JmapClient(account);
 
-  const rows = emails.length === 0
-    ? `<tr><td colspan="4" class="empty" style="padding:20px">Inbox is empty.</td></tr>`
+  // Fetch mailboxes and emails in parallel
+  const [mailboxesResult, emailsResult] = await Promise.allSettled([
+    client.listMailboxes(),
+    toolListEmails(account, folder, 50),
+  ]);
+
+  const mailboxes = mailboxesResult.status === "fulfilled" ? mailboxesResult.value : [];
+  const emails = emailsResult.status === "fulfilled" ? emailsResult.value.emails : [];
+  const emailsError = emailsResult.status === "rejected" ? String(emailsResult.reason) : null;
+
+  // Sort mailboxes: Inbox first, then Sent, then alphabetical
+  const FOLDER_ORDER: Record<string, number> = { inbox: 0, sent: 1, drafts: 2, trash: 3, spam: 4 };
+  mailboxes.sort((a, b) => {
+    const ra = FOLDER_ORDER[a.role] ?? 9;
+    const rb = FOLDER_ORDER[b.role] ?? 9;
+    return ra !== rb ? ra - rb : a.name.localeCompare(b.name);
+  });
+
+  const totalAcrossAll = mailboxes.reduce((s, m) => s + m.totalEmails, 0);
+
+  // Folder tabs
+  const folderTabs = mailboxes.length > 0 ? `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px">
+      ${mailboxes.map(mb => {
+        const isActive = mb.name.toLowerCase() === folder.toLowerCase();
+        const badge = mb.totalEmails > 0 ? ` <span style="background:${isActive ? "rgba(255,255,255,0.3)" : "#e5e7eb"};color:${isActive ? "#fff" : "#444"};border-radius:10px;padding:1px 6px;font-size:.72rem">${mb.totalEmails}</span>` : "";
+        return `<a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(mb.name)}"
+          style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${isActive ? "600" : "500"};text-decoration:none;${isActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">${escHtml(mb.name)}${badge}</a>`;
+      }).join("")}
+    </div>` : "";
+
+  // Email rows
+  const rows = emailsError
+    ? `<tr><td colspan="3" style="padding:20px;color:#dc2626">Failed to load emails: ${escHtml(emailsError)}</td></tr>`
+    : emails.length === 0
+    ? `<tr><td colspan="3" class="empty" style="padding:28px;text-align:center">
+        <div style="font-size:1.1rem;margin-bottom:8px">📭</div>
+        <div style="font-weight:600;margin-bottom:4px">No emails in ${escHtml(folder)}</div>
+        ${totalAcrossAll === 0
+          ? `<div style="font-size:.82rem;color:#bbb;margin-top:4px">No emails found anywhere in this account — check that inbound delivery is working.</div>`
+          : `<div style="font-size:.82rem;color:#888">This folder is empty. ${totalAcrossAll} email${totalAcrossAll !== 1 ? "s" : ""} exist in other folders — check the tabs above.</div>`}
+      </td></tr>`
     : emails.map(e => {
         const date = new Date(e.receivedAt).toLocaleString();
-        const attach = e.hasAttachment ? `<span class="attach-icon" title="Has attachment">📎</span> ` : "";
+        const attach = e.hasAttachment ? `<span class="attach-icon" title="Has attachment">📎 </span>` : "";
         return `<tr>
-          <td>${attach}<a class="subject-link" href="/dashboard/email?a=${encodeURIComponent(account)}&id=${encodeURIComponent(e.id)}">${escHtml(e.subject)}</a><br><span style="font-size:.75rem;color:#888">${escHtml(e.preview.slice(0, 80))}</span></td>
-          <td style="white-space:nowrap;color:#666;font-size:.83rem">${escHtml(e.from)}</td>
-          <td style="white-space:nowrap;color:#888;font-size:.82rem">${escHtml(date)}</td>
+          <td>${attach}<a class="subject-link" href="/dashboard/email?a=${encodeURIComponent(account)}&id=${encodeURIComponent(e.id)}&folder=${encodeURIComponent(folder)}">${escHtml(e.subject)}</a>
+            <br><span style="font-size:.75rem;color:#aaa">${escHtml(e.preview.slice(0, 90))}</span></td>
+          <td style="white-space:nowrap;color:#666;font-size:.83rem;max-width:180px;overflow:hidden;text-overflow:ellipsis">${escHtml(e.from)}</td>
+          <td style="white-space:nowrap;color:#999;font-size:.81rem">${escHtml(date)}</td>
         </tr>`;
       }).join("");
 
-  return page(`Inbox — ${account}`, `
+  const folderLabel = emailsResult.status === "fulfilled" ? `${escHtml(folder)} — ${emails.length} email${emails.length !== 1 ? "s" : ""}` : escHtml(folder);
+
+  return page(`${folder} — ${account}`, `
     ${topbar()}
     ${tabBar("inboxes")}
     <div class="container">
       <div>
         <a class="back-link" href="/dashboard?tab=inboxes">← All accounts</a>
         <div class="page-title">${escHtml(account)}</div>
-        <div class="page-sub">Inbox — ${emails.length} email${emails.length !== 1 ? "s" : ""}</div>
+        <div class="page-sub">${folderLabel}</div>
       </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <table>
-          <thead><tr><th>Subject</th><th>From</th><th>Received</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+      <div class="card" style="padding:20px 20px 0">
+        ${folderTabs}
+        <div style="margin:0 -20px">
+          <table>
+            <thead><tr><th style="padding-left:20px">Subject</th><th>From</th><th>Received</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
       </div>
     </div>
   `);
@@ -743,7 +788,7 @@ async function buildInboxPage(account: string): Promise<string> {
 // Sub-page: Email detail
 // ---------------------------------------------------------------------------
 
-async function buildEmailPage(account: string, emailId: string): Promise<string> {
+async function buildEmailPage(account: string, emailId: string, folder = "Inbox"): Promise<string> {
   const email = await toolReadEmail(account, emailId);
   const date = new Date(email.receivedAt).toLocaleString();
   const body = email.textBody ?? email.htmlBody ?? "(no body)";
@@ -758,7 +803,7 @@ async function buildEmailPage(account: string, emailId: string): Promise<string>
     ${tabBar("inboxes")}
     <div class="container">
       <div>
-        <a class="back-link" href="/dashboard/inbox?a=${encodeURIComponent(account)}">← Back to inbox</a>
+        <a class="back-link" href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(folder)}">← Back to ${escHtml(folder)}</a>
       </div>
       <div class="card">
         <div class="email-meta">
@@ -910,16 +955,17 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
-  // GET /dashboard/inbox?a=email
+  // GET /dashboard/inbox?a=email&folder=Inbox
   if (path === "/dashboard/inbox") {
     const account = url.searchParams.get("a") ?? "";
+    const folder = url.searchParams.get("folder") ?? "Inbox";
     if (!account) {
       res.writeHead(302, { "Location": "/dashboard?tab=inboxes" });
       res.end();
       return;
     }
     try {
-      const html = await buildInboxPage(account);
+      const html = await buildInboxPage(account, folder);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
     } catch (e) {
@@ -929,22 +975,23 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
-  // GET /dashboard/email?a=email&id=jmapId
+  // GET /dashboard/email?a=email&id=jmapId&folder=Inbox
   if (path === "/dashboard/email") {
     const account = url.searchParams.get("a") ?? "";
     const emailId = url.searchParams.get("id") ?? "";
+    const folder = url.searchParams.get("folder") ?? "Inbox";
     if (!account || !emailId) {
       res.writeHead(302, { "Location": "/dashboard?tab=inboxes" });
       res.end();
       return;
     }
     try {
-      const html = await buildEmailPage(account, emailId);
+      const html = await buildEmailPage(account, emailId, folder);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
     } catch (e) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(page("Error", `<div class="container" style="padding-top:40px"><div class="card"><p style="color:#dc2626">Error loading email: ${escHtml(String(e))}</p><a href="/dashboard/inbox?a=${encodeURIComponent(account)}" class="back-link">← Back to inbox</a></div></div>`));
+      res.end(page("Error", `<div class="container" style="padding-top:40px"><div class="card"><p style="color:#dc2626">Error loading email: ${escHtml(String(e))}</p><a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(folder)}" class="back-link">← Back</a></div></div>`));
     }
     return;
   }

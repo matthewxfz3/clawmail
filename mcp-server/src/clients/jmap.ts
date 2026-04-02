@@ -316,6 +316,37 @@ export class JmapClient {
   }
 
   // -------------------------------------------------------------------------
+  // Public: list all mailboxes with their totalEmails count (single request)
+  // -------------------------------------------------------------------------
+
+  async listMailboxes(): Promise<Array<{ id: string; name: string; role: string; totalEmails: number; unreadEmails: number }>> {
+    const accountId = await this.resolveAccountId();
+    const responses = await this.request([
+      [
+        "Mailbox/get",
+        {
+          accountId,
+          ids: null, // null = all mailboxes
+          properties: ["id", "name", "role", "totalEmails", "unreadEmails"],
+        },
+        "mbs",
+      ],
+    ]);
+
+    const response = responses.find(([, , id]) => id === "mbs");
+    if (!response) return [];
+
+    const list = (response[1] as { list?: Array<Record<string, unknown>> }).list ?? [];
+    return list.map((m) => ({
+      id: typeof m["id"] === "string" ? m["id"] : "",
+      name: typeof m["name"] === "string" ? m["name"] : "",
+      role: typeof m["role"] === "string" ? m["role"] : "",
+      totalEmails: typeof m["totalEmails"] === "number" ? m["totalEmails"] : 0,
+      unreadEmails: typeof m["unreadEmails"] === "number" ? m["unreadEmails"] : 0,
+    }));
+  }
+
+  // -------------------------------------------------------------------------
   // Public: count emails in a folder (uses calculateTotal, no body fetch)
   // -------------------------------------------------------------------------
 
