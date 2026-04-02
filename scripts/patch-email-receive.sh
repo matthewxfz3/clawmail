@@ -4,13 +4,13 @@
 # Accounts created before the createAccount fix don't have it.
 #
 # Usage:
-#   STALWART_URL=http://35.203.162.161:8080 \
+#   STALWART_URL=http://<stalwart-vm-ip>:8080 \
 #   STALWART_ADMIN_PASSWORD=<password> \
 #   bash scripts/patch-email-receive.sh
 
 set -euo pipefail
 
-STALWART_URL="${STALWART_URL:-http://35.203.162.161:8080}"
+STALWART_URL="${STALWART_URL:-http://localhost:8080}"
 ADMIN_USER="${STALWART_ADMIN_USER:-admin}"
 ADMIN_PASS="${STALWART_ADMIN_PASSWORD:?STALWART_ADMIN_PASSWORD must be set}"
 

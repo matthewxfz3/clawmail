@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Clawmail pre-commit hook — scans staged files for secrets and sensitive data.
+#
+# Install: bash scripts/install-hooks.sh
+# Bypass (emergency only): git commit --no-verify
+
+set -euo pipefail
+
+RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'
+BOLD='\033[1m'
+
+found=0
+
+check() {
+  local label="$1"
+  local pattern="$2"
+  # Search only staged files (text files, not binary, not deleted)
+  local matches
+  matches=$(git diff --cached --name-only --diff-filter=ACM | \
+    xargs grep -lEI "$pattern" 2>/dev/null || true)
+  if [[ -n "$matches" ]]; then
+    echo -e "${RED}[secret-scan]${NC} ${BOLD}$label${NC} found in:"
+    echo "$matches" | sed 's/^/    /'
+    found=1
+  fi
+}
+
+echo -e "${YELLOW}[secret-scan]${NC} Scanning staged files..."
+
+# SendGrid API key
+check "SendGrid API key" 'SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{40,}'
+
+# Generic API key / secret patterns (long hex or base64 strings assigned to key vars)
+check "Possible API key assignment" '(api_key|apikey|api-key|secret|password|passwd|token)\s*[=:]\s*["\x27][A-Za-z0-9+/=_-]{20,}'
+
+# GCP project ID (the specific one for this project)
+check "Hardcoded GCP project ID" 'ai-for-marketing-[0-9]+'
+
+# IPv4 addresses that look like infra IPs (not localhost/private)
+# Excludes: 127.x, 10.x, 172.16-31.x, 192.168.x
+check "Public IP address (possible infra leak)" \
+  '\b(?!127\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b'
+
+# Files that should never be committed
+BLOCKED_FILES=("deploy/config.sh" ".env" "infra/terraform.tfstate" "infra/terraform.tfstate.backup")
+for f in "${BLOCKED_FILES[@]}"; do
+  if git diff --cached --name-only | grep -qF "$f" 2>/dev/null; then
+    echo -e "${RED}[secret-scan]${NC} ${BOLD}Blocked file staged: $f${NC}"
+    found=1
+  fi
+done
+
+if [[ "$found" -eq 1 ]]; then
+  echo ""
+  echo -e "${RED}${BOLD}Commit blocked.${NC} Remove the sensitive values above before committing."
+  echo -e "To bypass in an emergency: ${YELLOW}git commit --no-verify${NC}"
+  exit 1
+fi
+
+echo -e "${GREEN}[secret-scan]${NC} No secrets found."
+exit 0
