@@ -57,6 +57,16 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
         }
       }
 
+      env {
+        name = "DASHBOARD_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.secrets["dashboard-password"].secret_id
+            version = "latest"
+          }
+        }
+      }
+
       ports {
         container_port = 8080
       }
