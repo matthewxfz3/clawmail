@@ -113,5 +113,19 @@ next-hop = [{if = "is_local_domain('', rcpt.domain)", then = "'local'"}, {else =
 type = "local"
 
 [queue.route."sendgrid"]
-type = "relay"
-server = "sendgrid"
+type     = "relay"
+server   = "sendgrid"
+# v0.15 requires these fields inline even when referencing a remote.*
+address  = "smtp.sendgrid.net"
+port     = 587
+protocol = "Smtp"
+
+# ---------------------------------------------------------------------------
+# DKIM signing — sign outbound mail with Ed25519
+# The private key is stored in the database (provisioned via /api/dkim).
+# DNS: default._domainkey.${DOMAIN} TXT "v=DKIM1; k=ed25519; p=<pubkey>"
+# ---------------------------------------------------------------------------
+
+[auth.dkim.sign]
+if   = "is_local_domain('', sender_domain)"
+then = "['default']"
