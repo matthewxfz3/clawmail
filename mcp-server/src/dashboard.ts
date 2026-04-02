@@ -3,8 +3,9 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { config } from "./config.js";
 import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail } from "./tools/mailbox.js";
+import { toolSendEmail } from "./tools/send.js";
 import { JmapClient } from "./clients/jmap.js";
-import { getMetrics, getSamples } from "./metrics.js";
+import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Session cookie — HMAC-SHA256 signed, 7-day expiry
@@ -349,10 +350,6 @@ async function buildOverview(serviceUrl: string, accounts: Array<{ email: string
 
   const snippet = JSON.stringify({ mcpServers: { clawmail: { type: "http", url: mcpUrl, headers: { "X-API-Key": firstKey || "(no API key configured)" } } } }, null, 2);
 
-  const accountRows = accounts.length === 0
-    ? `<tr><td colspan="2" class="empty">No accounts yet — use the <code>create_account</code> MCP tool to add one.</td></tr>`
-    : accounts.map(a => `<tr><td><a href="/dashboard/inbox?a=${encodeURIComponent(a.email)}" style="color:#4f46e5;text-decoration:none;font-weight:500">${escHtml(a.email)}</a></td><td><span class="pill green">active</span></td></tr>`).join("");
-
   return `
     <div class="card">
       <h2>Connect your agent</h2>
@@ -365,9 +362,16 @@ async function buildOverview(serviceUrl: string, accounts: Array<{ email: string
       <h2>System status</h2>
       ${statusGroup(mcpG)}${statusGroup(stalwartG)}${statusGroup(dnsG)}${statusGroup(sgG)}
     </div>
-    <div class="card">
-      <h2>Accounts (${accounts.length})</h2>
-      <table><thead><tr><th>Email address</th><th>Status</th></tr></thead><tbody>${accountRows}</tbody></table>
+    <div class="card" style="display:flex;align-items:center;gap:24px">
+      <div>
+        <div style="font-size:3rem;font-weight:700;color:#1a1a2e;line-height:1">${accounts.length}</div>
+        <div style="font-size:.8rem;color:#888;text-transform:uppercase;letter-spacing:.6px;margin-top:4px">Active accounts</div>
+      </div>
+      <div style="flex:1">
+        ${accounts.length === 0
+          ? `<p style="color:#999;font-size:.85rem">No accounts yet — use the <code>create_account</code> MCP tool to provision one.</p>`
+          : `<p style="color:#666;font-size:.85rem">Manage inboxes and browse emails in the <a href="/dashboard?tab=inboxes" style="color:#4f46e5">Inboxes</a> tab.</p>`}
+      </div>
     </div>
   `;
 }
@@ -377,26 +381,63 @@ async function buildOverview(serviceUrl: string, accounts: Array<{ email: string
 // ---------------------------------------------------------------------------
 
 function buildInboxesTab(accounts: Array<{ email: string; name: string }>): string {
-  if (accounts.length === 0) {
-    return `<div class="card"><h2>Inboxes</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`;
-  }
-  const rows = accounts.map((a, i) => `
-    <tr>
-      <td style="color:#888;font-size:.78rem;width:32px;text-align:right;padding-right:14px">${i + 1}</td>
-      <td><span style="font-weight:600;color:#1a1a2e">${escHtml(a.email)}</span></td>
-      <td style="width:130px">
-        <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 12px">View inbox →</a>
-      </td>
-    </tr>
-  `).join("");
-  return `
+  const accountList = accounts.length === 0
+    ? `<div class="card"><h2>Accounts</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`
+    : (() => {
+        const rows = accounts.map((a, i) => {
+          const ts = getAccountCreatedAt(a.email);
+          const createdStr = ts
+            ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+            : `<span style="color:#bbb">—</span>`;
+          return `
+            <tr>
+              <td style="color:#aaa;font-size:.78rem;width:28px;text-align:right;padding-right:12px">${i + 1}</td>
+              <td><span style="font-weight:600;color:#1a1a2e">${escHtml(a.email)}</span></td>
+              <td style="color:#888;font-size:.82rem;white-space:nowrap">${createdStr}</td>
+              <td style="width:120px;text-align:right">
+                <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 12px">View inbox →</a>
+              </td>
+            </tr>`;
+        }).join("");
+        return `
+          <div class="card">
+            <h2>Agent accounts (${accounts.length})</h2>
+            <table>
+              <thead><tr><th style="width:28px"></th><th>Email address</th><th>Created</th><th></th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+            <p style="font-size:.72rem;color:#bbb;margin-top:10px">Created time only tracked for accounts provisioned during the current server session.</p>
+          </div>`;
+      })();
+
+  const fromOptions = accounts.map(a =>
+    `<option value="${escHtml(a.email)}">${escHtml(a.email)}</option>`
+  ).join("");
+
+  const testEmailForm = `
     <div class="card">
-      <h2>Agent accounts (${accounts.length})</h2>
-      <table>
-        <thead><tr><th style="width:32px"></th><th>Email address</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <h2>Send test email</h2>
+      <p style="font-size:.83rem;color:#666;margin-bottom:18px">Send a test message to verify the send pipeline is working end-to-end.</p>
+      <form method="POST" action="/dashboard/action/send-test-email" style="display:grid;gap:14px;max-width:520px">
+        <div>
+          <label>From account</label>
+          ${accounts.length > 0
+            ? `<select name="from" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff">${fromOptions}</select>`
+            : `<input type="text" name="from" placeholder="agent@${escHtml(config.domain)}" required>`}
+        </div>
+        <div><label>To</label><input type="text" name="to" placeholder="recipient@example.com" required></div>
+        <div><label>Subject</label><input type="text" name="subject" value="Test email from Clawmail" required></div>
+        <div>
+          <label>Body</label>
+          <textarea name="body" rows="4" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical">Hello — this is a test email sent from the Clawmail dashboard at ${new Date().toISOString()}.\n\nIf you received this, the send pipeline is working correctly.</textarea>
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary" style="padding:9px 22px;font-size:.88rem">Send test email →</button>
+        </div>
+      </form>
     </div>`;
+
+  return accountList + testEmailForm;
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +461,7 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
     r.status === "fulfilled" ? r.value : { email: capped[i].email, count: -1 }
   );
   const totalEmails = emailCounts.reduce((s, c) => s + Math.max(0, c.count), 0);
+  setInboxTotal(totalEmails); // keep the time-series sampler up to date
 
   // Process health mini-cards
   const uptimeSec = Math.floor(process.uptime());
@@ -532,44 +574,33 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
             return new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           });
 
-          // Net accounts created this session (cumulative)
-          var netAccounts = s.map(function(p) { return p.createAccountCalls - p.deleteAccountCalls; });
-
+          // Plot 1 — Sent vs Received emails over time
+          // sendEmailCalls = cumulative emails sent via MCP tool
+          // inboxTotal     = absolute total emails across all inboxes (received proxy)
           new Chart(document.getElementById('chart-traffic'), {
             type: 'line',
             data: {
               labels: labels,
               datasets: [
                 {
-                  label: 'MCP requests',
-                  data: s.map(function(p) { return p.totalRequests; }),
-                  borderColor: '#4f46e5',
-                  backgroundColor: 'rgba(79,70,229,0.08)',
-                  fill: true,
-                  tension: 0.35,
-                  pointRadius: 3,
-                  pointHoverRadius: 6,
-                },
-                {
-                  label: 'Emails sent',
+                  label: 'Emails sent (cumulative)',
                   data: s.map(function(p) { return p.sendEmailCalls; }),
-                  borderColor: '#22c55e',
-                  backgroundColor: 'rgba(34,197,94,0.06)',
+                  borderColor: '#4f46e5',
+                  backgroundColor: 'rgba(79,70,229,0.07)',
                   fill: true,
                   tension: 0.35,
                   pointRadius: 3,
                   pointHoverRadius: 6,
                 },
                 {
-                  label: 'Net accounts created',
-                  data: netAccounts,
-                  borderColor: '#f59e0b',
-                  backgroundColor: 'transparent',
-                  fill: false,
+                  label: 'Emails in inboxes (received)',
+                  data: s.map(function(p) { return p.inboxTotal; }),
+                  borderColor: '#22c55e',
+                  backgroundColor: 'rgba(34,197,94,0.07)',
+                  fill: true,
                   tension: 0.35,
                   pointRadius: 3,
                   pointHoverRadius: 6,
-                  borderDash: [4, 3],
                 },
               ]
             },
@@ -579,7 +610,12 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
               interaction: { mode: 'index', intersect: false },
               plugins: {
                 legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12 } },
-                tooltip: { enabled: true }
+                tooltip: {
+                  enabled: true,
+                  callbacks: {
+                    label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y; }
+                  }
+                }
               },
               scales: {
                 y: { beginAtZero: true, ticks: { precision: 0 } }
@@ -587,7 +623,7 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
             }
           });
 
-          // Error deltas per interval
+          // Plot 2 — Errors per sample interval (bar)
           var errDeltas = s.map(function(p, i) {
             return i === 0 ? p.totalErrors : Math.max(0, p.totalErrors - s[i - 1].totalErrors);
           });
@@ -597,9 +633,9 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
             data: {
               labels: labels,
               datasets: [{
-                label: 'Errors',
+                label: 'Errors in interval',
                 data: errDeltas,
-                backgroundColor: 'rgba(239,68,68,0.65)',
+                backgroundColor: 'rgba(239,68,68,0.60)',
                 borderColor: '#ef4444',
                 borderWidth: 1,
                 borderRadius: 3,
@@ -611,7 +647,13 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
               interaction: { mode: 'index', intersect: false },
               plugins: {
                 legend: { display: false },
-                tooltip: { enabled: true }
+                tooltip: {
+                  enabled: true,
+                  callbacks: {
+                    title: function(items) { return items[0].label; },
+                    label: function(ctx) { return ' Errors: ' + ctx.parsed.y; }
+                  }
+                }
               },
               scales: {
                 y: { beginAtZero: true, ticks: { precision: 0 } }
@@ -710,13 +752,17 @@ async function buildEmailPage(account: string, emailId: string): Promise<string>
 // Main dashboard page (tab routing)
 // ---------------------------------------------------------------------------
 
-async function buildDashboard(serviceUrl: string, tab: string): Promise<string> {
+async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "ok" | "err"; msg: string }): Promise<string> {
   const accountsResult = await toolListAccounts().catch(() => ({ accounts: [] as Array<{ email: string; name: string }>, count: 0 }));
   const accounts = accountsResult.accounts;
 
+  const flashBanner = flash
+    ? `<div style="margin:12px 0 0;padding:10px 16px;border-radius:6px;font-size:.85rem;font-weight:500;${flash.type === "ok" ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}">${flash.type === "ok" ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`
+    : "";
+
   let content: string;
   if (tab === "inboxes") {
-    content = buildInboxesTab(accounts);
+    content = (flashBanner ? `<div>${flashBanner}</div>` : "") + buildInboxesTab(accounts);
   } else if (tab === "metrics") {
     content = await buildMetricsTab(accounts);
   } else {
@@ -798,6 +844,25 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // POST /dashboard/action/send-test-email
+  if (path === "/dashboard/action/send-test-email" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const from = form["from"] ?? "";
+    const to = form["to"] ?? "";
+    const subject = form["subject"] ?? "Test email from Clawmail";
+    const bodyText = form["body"] ?? "Test email.";
+    try {
+      await toolSendEmail({ fromAccount: from, to, subject, body: bodyText });
+      res.writeHead(302, { "Location": `/dashboard?tab=inboxes&sent=1` });
+    } catch (e) {
+      const errMsg = encodeURIComponent(e instanceof Error ? e.message : String(e));
+      res.writeHead(302, { "Location": `/dashboard?tab=inboxes&err=${errMsg}` });
+    }
+    res.end();
+    return;
+  }
+
   // POST /dashboard/action/delete-email
   if (path === "/dashboard/action/delete-email" && req.method === "POST") {
     const body = await readBody(req);
@@ -857,7 +922,11 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers["host"] ?? `localhost:${config.port}`;
   const serviceUrl = `${proto}://${host}`;
 
-  const html = await buildDashboard(serviceUrl, tab);
+  let flash: { type: "ok" | "err"; msg: string } | undefined;
+  if (url.searchParams.get("sent") === "1") flash = { type: "ok", msg: "Test email sent successfully." };
+  else if (url.searchParams.get("err")) flash = { type: "err", msg: url.searchParams.get("err")! };
+
+  const html = await buildDashboard(serviceUrl, tab, flash);
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
 }
