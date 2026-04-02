@@ -316,6 +316,38 @@ export class JmapClient {
   }
 
   // -------------------------------------------------------------------------
+  // Public: count emails in a folder (uses calculateTotal, no body fetch)
+  // -------------------------------------------------------------------------
+
+  async countEmails(folder = "Inbox"): Promise<number> {
+    const accountId = await this.resolveAccountId();
+    const mailboxId = await this.getMailboxId(folder);
+
+    const queryFilter: Record<string, unknown> = {};
+    if (mailboxId !== null) {
+      queryFilter["inMailbox"] = mailboxId;
+    }
+
+    const responses = await this.request([
+      [
+        "Email/query",
+        {
+          accountId,
+          filter: queryFilter,
+          calculateTotal: true,
+          limit: 0,
+        },
+        "cnt1",
+      ],
+    ]);
+
+    const response = responses.find(([, , id]) => id === "cnt1");
+    if (!response) return 0;
+    const total = (response[1] as { total?: number }).total;
+    return typeof total === "number" ? total : 0;
+  }
+
+  // -------------------------------------------------------------------------
   // Public: list emails
   // -------------------------------------------------------------------------
 

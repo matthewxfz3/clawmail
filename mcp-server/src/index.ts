@@ -16,6 +16,7 @@ import {
 } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
 import { handleDashboard } from "./dashboard.js";
+import { recordCall, recordError, recordRateLimit } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Rate limiter — sliding window using timestamps per (apiKey, operation) key
@@ -92,13 +93,16 @@ function createMcpServer(apiKey: string): McpServer {
     "Create a new email account on the mail server",
     { local_part: z.string().describe("The local part (before @) of the new email address") },
     async (args) => {
+      recordCall("create_account");
       if (!checkRateLimit("create_account", apiKey, config.limits.createAccountPerHour, 60 * 60 * 1000)) {
+        recordRateLimit("create_account");
         return rateLimitErr("create_account");
       }
       try {
         const result = await toolCreateAccount(args.local_part);
         return okContent(result);
       } catch (err) {
+        recordError("create_account");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -110,13 +114,16 @@ function createMcpServer(apiKey: string): McpServer {
     "List all email accounts on the mail server",
     {},
     async () => {
+      recordCall("list_accounts");
       if (!checkRateLimit("list_accounts", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_accounts");
         return rateLimitErr("list_accounts");
       }
       try {
         const result = await toolListAccounts();
         return okContent(result);
       } catch (err) {
+        recordError("list_accounts");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -128,13 +135,16 @@ function createMcpServer(apiKey: string): McpServer {
     "Permanently delete an email account from the mail server",
     { local_part: z.string().describe("The local part (before @) of the account to delete") },
     async (args) => {
+      recordCall("delete_account");
       if (!checkRateLimit("delete_account", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("delete_account");
         return rateLimitErr("delete_account");
       }
       try {
         const result = await toolDeleteAccount(args.local_part);
         return okContent(result);
       } catch (err) {
+        recordError("delete_account");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -150,13 +160,16 @@ function createMcpServer(apiKey: string): McpServer {
       limit: z.number().int().min(1).max(100).optional().describe("Maximum number of emails to return (1-100, default: 20)"),
     },
     async (args) => {
+      recordCall("list_emails");
       if (!checkRateLimit("list_emails", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_emails");
         return rateLimitErr("list_emails");
       }
       try {
         const result = await toolListEmails(args.account, args.folder, args.limit);
         return okContent(result);
       } catch (err) {
+        recordError("list_emails");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -171,13 +184,16 @@ function createMcpServer(apiKey: string): McpServer {
       email_id: z.string().describe("The JMAP email ID"),
     },
     async (args) => {
+      recordCall("read_email");
       if (!checkRateLimit("read_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("read_email");
         return rateLimitErr("read_email");
       }
       try {
         const result = await toolReadEmail(args.account, args.email_id);
         return okContent(result);
       } catch (err) {
+        recordError("read_email");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -192,13 +208,16 @@ function createMcpServer(apiKey: string): McpServer {
       email_id: z.string().describe("The JMAP email ID"),
     },
     async (args) => {
+      recordCall("delete_email");
       if (!checkRateLimit("delete_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("delete_email");
         return rateLimitErr("delete_email");
       }
       try {
         const result = await toolDeleteEmail(args.account, args.email_id);
         return okContent(result);
       } catch (err) {
+        recordError("delete_email");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -213,13 +232,16 @@ function createMcpServer(apiKey: string): McpServer {
       query: z.string().describe("Search query string"),
     },
     async (args) => {
+      recordCall("search_emails");
       if (!checkRateLimit("search_emails", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("search_emails");
         return rateLimitErr("search_emails");
       }
       try {
         const result = await toolSearchEmails(args.account, args.query);
         return okContent(result);
       } catch (err) {
+        recordError("search_emails");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
@@ -238,7 +260,9 @@ function createMcpServer(apiKey: string): McpServer {
       bcc: z.array(z.string()).optional().describe("BCC recipient email addresses"),
     },
     async (args) => {
+      recordCall("send_email");
       if (!checkRateLimit("send_email", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
+        recordRateLimit("send_email");
         return rateLimitErr("send_email");
       }
       try {
@@ -252,6 +276,7 @@ function createMcpServer(apiKey: string): McpServer {
         });
         return okContent(result);
       } catch (err) {
+        recordError("send_email");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
