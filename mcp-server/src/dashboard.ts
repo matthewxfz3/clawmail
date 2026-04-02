@@ -10,8 +10,14 @@ import { toolListAccounts } from "./tools/accounts.js";
 const COOKIE_NAME = "clawmail_dash";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// If DASHBOARD_PASSWORD is not explicitly set, fall back to the Stalwart admin
+// password so the dashboard is always protected by something meaningful.
+function effectivePassword(): string {
+  return config.dashboard.password || config.stalwart.adminPassword;
+}
+
 function signSession(payload: string): string {
-  const sig = createHmac("sha256", config.dashboard.password || "dev")
+  const sig = createHmac("sha256", effectivePassword())
     .update(payload)
     .digest("hex");
   return `${payload}.${sig}`;
@@ -22,7 +28,7 @@ function verifySession(cookie: string): boolean {
   if (dot === -1) return false;
   const payload = cookie.slice(0, dot);
   const sig = cookie.slice(dot + 1);
-  const expected = createHmac("sha256", config.dashboard.password || "dev")
+  const expected = createHmac("sha256", effectivePassword())
     .update(payload)
     .digest("hex");
   try {
@@ -44,7 +50,6 @@ function clearSessionCookie(): string {
 }
 
 function isAuthenticated(req: IncomingMessage): boolean {
-  if (!config.dashboard.password) return true; // no password set → open
   const cookieHeader = req.headers["cookie"] ?? "";
   for (const part of cookieHeader.split(";")) {
     const [name, ...rest] = part.trim().split("=");
@@ -319,17 +324,15 @@ async function buildDashboard(serviceUrl: string): Promise<string> {
   const sendgridGroup = checkSendgridGroup();
 
   const mcpUrl = `${serviceUrl}/mcp`;
-  const firstKey = [...config.auth.apiKeys][0] ?? "(no API key configured)";
-  const maskedKey = firstKey.length > 8
-    ? firstKey.slice(0, 4) + "••••••••" + firstKey.slice(-4)
-    : "••••••••";
+  const allKeys = [...config.auth.apiKeys];
+  const firstKey = allKeys[0] ?? "";
 
   const snippet = JSON.stringify({
     mcpServers: {
       clawmail: {
         type: "http",
         url: mcpUrl,
-        headers: { "X-API-Key": "<your-api-key>" },
+        headers: { "X-API-Key": firstKey || "(no API key configured)" },
       },
     },
   }, null, 2);
@@ -350,17 +353,10 @@ async function buildDashboard(serviceUrl: string): Promise<string> {
 
       <div class="card">
         <h2>Connect your agent</h2>
-        <p style="font-size:.85rem;color:#666;margin-bottom:14px">Add this to your <code>mcp.json</code> or Claude Desktop config:</p>
+        <p style="font-size:.85rem;color:#666;margin-bottom:14px">Paste this into your <code>mcp.json</code> or Claude Desktop config — the API key is already filled in:</p>
         <div class="code-block">${escHtml(snippet)}</div>
-        <p style="font-size:.82rem;color:#888;margin-top:10px">Replace <code>&lt;your-api-key&gt;</code> with one of the keys below.</p>
-        <div style="margin-top:16px">
-          <p style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">MCP endpoint</p>
-          <div class="url-display">${escHtml(mcpUrl)}</div>
-        </div>
-        <div style="margin-top:16px">
-          <p style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">API key (masked)</p>
-          <div class="key-row"><span>${escHtml(maskedKey)}</span>${config.auth.apiKeys.size > 1 ? `<span style="font-size:.78rem;color:#999">+${config.auth.apiKeys.size - 1} more</span>` : ""}</div>
-        </div>
+        ${allKeys.length > 1 ? `<div style="margin-top:14px"><p style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">All API keys (${allKeys.length})</p>${allKeys.map(k => `<div class="key-row" style="margin-bottom:6px"><span style="font-family:monospace;font-size:.82rem">${escHtml(k)}</span></div>`).join("")}</div>` : ""}
+        ${allKeys.length === 0 ? `<p style="font-size:.82rem;color:#dc2626;margin-top:10px">No API keys configured — set MCP_API_KEYS env var.</p>` : ""}
       </div>
 
       <div class="card">
@@ -419,8 +415,7 @@ export async function handleDashboard(
     const form = parseFormBody(body);
 
     const userOk = form["user"] === config.dashboard.user;
-    const passOk = config.dashboard.password === ""
-      || form["pass"] === config.dashboard.password;
+    const passOk = form["pass"] === effectivePassword();
 
     if (!userOk || !passOk) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
