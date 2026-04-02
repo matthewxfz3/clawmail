@@ -48,8 +48,11 @@ function basicAuthHeader(): string {
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 }
 
-/** Module-level session cache keyed by accountId (email). */
-const sessionCache = new Map<string, JmapSession>();
+/** Module-level session cache (shared — we always auth as admin). */
+let cachedSession: JmapSession | undefined;
+
+/** Cache: email → opaque JMAP account ID. */
+const jmapIdCache = new Map<string, string>();
 
 /** Extract a plain-text address from a JMAP EmailAddress object or string. */
 function addressToString(addr: unknown): string {
@@ -134,15 +137,18 @@ function rawToDetail(raw: Record<string, unknown>): EmailDetail {
 // ---------------------------------------------------------------------------
 
 export class JmapClient {
-  constructor(private readonly accountId: string) {}
+  /**
+   * @param email  Full email address of the target account (e.g. "user@domain").
+   *               Used to resolve the opaque JMAP account ID via the Principals API.
+   */
+  constructor(private readonly email: string) {}
 
   // -------------------------------------------------------------------------
-  // Private: session discovery
+  // Private: session discovery (shared admin session)
   // -------------------------------------------------------------------------
 
   private async getSession(): Promise<JmapSession> {
-    const cached = sessionCache.get(this.accountId);
-    if (cached !== undefined) return cached;
+    if (cachedSession !== undefined) return cachedSession;
 
     const wellKnownUrl = new URL("/.well-known/jmap", config.stalwart.url).toString();
 
@@ -175,13 +181,70 @@ export class JmapClient {
       throw new Error("JMAP session response missing apiUrl");
     }
 
-    const session: JmapSession = {
+    cachedSession = {
       apiUrl: data.apiUrl,
       primaryAccounts: data.primaryAccounts ?? {},
     };
 
-    sessionCache.set(this.accountId, session);
-    return session;
+    return cachedSession;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: resolve email → opaque JMAP account ID via Principals API
+  // -------------------------------------------------------------------------
+
+  private async resolveAccountId(): Promise<string> {
+    const cached = jmapIdCache.get(this.email);
+    if (cached !== undefined) return cached;
+
+    const session = await this.getSession();
+
+    // The admin's primary account ID handles the Principals capability.
+    const principalsAccountId =
+      session.primaryAccounts["urn:ietf:params:jmap:principals"] ??
+      session.primaryAccounts["urn:ietf:params:jmap:mail"];
+
+    if (!principalsAccountId) {
+      throw new Error("Cannot determine JMAP principals account ID from session");
+    }
+
+    const res = await fetch(session.apiUrl, {
+      method: "POST",
+      headers: {
+        Authorization: basicAuthHeader(),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        using: ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:principals"],
+        methodCalls: [
+          ["Principal/get", { accountId: principalsAccountId, ids: null }, "pget"],
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Principal/get failed: HTTP ${res.status}`);
+    }
+
+    const data = (await res.json()) as { methodResponses?: Array<[string, Record<string, unknown>, string]> };
+    const pResponse = (data.methodResponses ?? []).find(([, , id]) => id === "pget");
+    if (!pResponse) {
+      throw new Error("No Principal/get response from JMAP");
+    }
+
+    const list = (pResponse[1] as { list?: Array<Record<string, unknown>> }).list ?? [];
+    const principal = list.find(
+      (p) => typeof p["email"] === "string" && p["email"].toLowerCase() === this.email.toLowerCase(),
+    );
+
+    if (!principal || typeof principal["id"] !== "string") {
+      throw new Error(`No JMAP principal found for email: ${this.email}`);
+    }
+
+    const jmapId = principal["id"] as string;
+    jmapIdCache.set(this.email, jmapId);
+    return jmapId;
   }
 
   // -------------------------------------------------------------------------
@@ -233,11 +296,12 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   private async getMailboxId(name: string): Promise<string | null> {
+    const accountId = await this.resolveAccountId();
     const responses = await this.request([
       [
         "Mailbox/query",
         {
-          accountId: this.accountId,
+          accountId,
           filter: { name },
         },
         "mb1",
@@ -259,6 +323,7 @@ export class JmapClient {
     folder = "Inbox",
     limit = 50,
   ): Promise<EmailSummary[]> {
+    const accountId = await this.resolveAccountId();
     const mailboxId = await this.getMailboxId(folder);
 
     const queryFilter: Record<string, unknown> = {};
@@ -270,7 +335,7 @@ export class JmapClient {
       [
         "Email/query",
         {
-          accountId: this.accountId,
+          accountId,
           filter: queryFilter,
           sort: [{ property: "receivedAt", isAscending: false }],
           limit,
@@ -280,7 +345,7 @@ export class JmapClient {
       [
         "Email/get",
         {
-          accountId: this.accountId,
+          accountId,
           "#ids": {
             resultOf: "c1",
             name: "Email/query",
@@ -313,11 +378,12 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async getEmail(emailId: string): Promise<EmailDetail> {
+    const accountId = await this.resolveAccountId();
     const responses = await this.request([
       [
         "Email/get",
         {
-          accountId: this.accountId,
+          accountId,
           ids: [emailId],
           properties: [
             "id",
@@ -357,16 +423,17 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async deleteEmail(emailId: string): Promise<void> {
+    const accountId = await this.resolveAccountId();
     const trashId = await this.getMailboxId("Trash");
     if (trashId === null) {
-      throw new Error('Could not locate "Trash" mailbox for account: ' + this.accountId);
+      throw new Error('Could not locate "Trash" mailbox for account: ' + this.email);
     }
 
     const responses = await this.request([
       [
         "Email/set",
         {
-          accountId: this.accountId,
+          accountId,
           update: {
             [emailId]: {
               mailboxIds: { [trashId]: true },
@@ -397,11 +464,12 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async searchEmails(query: string): Promise<EmailSummary[]> {
+    const accountId = await this.resolveAccountId();
     const responses = await this.request([
       [
         "Email/query",
         {
-          accountId: this.accountId,
+          accountId,
           filter: { text: query },
           sort: [{ property: "receivedAt", isAscending: false }],
           limit: 50,
@@ -411,7 +479,7 @@ export class JmapClient {
       [
         "Email/get",
         {
-          accountId: this.accountId,
+          accountId,
           "#ids": {
             resultOf: "c1",
             name: "Email/query",

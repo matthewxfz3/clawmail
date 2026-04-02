@@ -21,5 +21,5 @@ resource "google_artifact_registry_repository_iam_member" "cloud_run_reader" {
   location   = google_artifact_registry_repository.clawmail.location
   repository = google_artifact_registry_repository.clawmail.name
   role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${google_service_account.cloud_run.email}"
+  member     = "serviceAccount:${google_service_account.clawmail_mcp_run.email}"
 }
