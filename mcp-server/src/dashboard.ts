@@ -147,7 +147,8 @@ interface StatusItem {
 
 async function checkStalwartHealth(): Promise<StatusItem> {
   try {
-    const url = new URL("/api/health", config.stalwart.url).toString();
+    // Stalwart has no /api/health endpoint — use /api/principal as a liveness probe
+    const url = new URL("/api/principal", config.stalwart.url).toString();
     const res = await fetch(url, {
       signal: AbortSignal.timeout(4000),
       headers: {
@@ -157,7 +158,8 @@ async function checkStalwartHealth(): Promise<StatusItem> {
     if (res.ok) {
       return { label: "Stalwart Mail Server", status: "ok", detail: config.stalwart.url };
     }
-    return { label: "Stalwart Mail Server", status: "warn", detail: `HTTP ${res.status}` };
+    const body = await res.text().catch(() => "");
+    return { label: "Stalwart Mail Server", status: "warn", detail: `HTTP ${res.status} — ${body.slice(0, 80)}` };
   } catch (e) {
     return { label: "Stalwart Mail Server", status: "fail", detail: String(e) };
   }
