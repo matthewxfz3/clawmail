@@ -93,6 +93,8 @@ export async function createAccount(
     description: email,
     emails: [email],
     quota: DEFAULT_QUOTA_BYTES,
+    // Stalwart v0.15 requires this permission to accept inbound SMTP delivery.
+    enabledPermissions: ["email-receive"],
   });
 
   const res = await stalwartFetch("/api/principal", {

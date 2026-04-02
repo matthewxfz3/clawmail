@@ -99,3 +99,19 @@ auth.secret   = "%{env:SENDGRID_API_KEY}%"
 [authentication.fallback-admin]
 user   = "admin"
 secret = "%{env:STALWART_ADMIN_SECRET}%"
+
+# ---------------------------------------------------------------------------
+# Queue routing — deliver local mail locally, relay everything else via SendGrid
+# ---------------------------------------------------------------------------
+
+# For each queued message, pick the next hop based on recipient domain.
+# is_local_domain checks Stalwart's internal directory for the domain.
+[queue.outbound]
+next-hop = [{if = "is_local_domain('', rcpt.domain)", then = "'local'"}, {else = "'sendgrid'"}]
+
+[queue.route."local"]
+type = "local"
+
+[queue.route."sendgrid"]
+type = "relay"
+server = "sendgrid"
