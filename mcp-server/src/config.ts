@@ -13,6 +13,10 @@ export const config = {
     // Comma-separated list of valid API keys
     apiKeys: new Set((process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean)),
   },
+  dashboard: {
+    user: process.env.DASHBOARD_USER ?? "admin",
+    password: process.env.DASHBOARD_PASSWORD ?? "",
+  },
   limits: {
     maxAttachmentBytes: parseInt(process.env.MAX_ATTACHMENT_BYTES ?? "26214400", 10),
     // Rate limits (requests per window)
