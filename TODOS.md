@@ -2,13 +2,11 @@
 
 ## Active
 
-- [ ] **Set up Stalwart DKIM signing for `fridaymailer.com`**
-  SendGrid domain auth (DKIM/DMARC) is done for outbound via SendGrid relay.
-  Still need Stalwart to sign any directly-delivered mail with its own DKIM key.
-  Generate key via Stalwart API → publish TXT record in Cloud DNS.
+_All items completed._
 
 ## Completed
 
+- [x] **Stalwart DKIM signing** — Ed25519 key generated via `/api/dkim`, `auth.dkim.sign` settings written to DB, `default._domainkey.fridaymailer.com` TXT record published, `queue.route.sendgrid` v0.15 inline fields fixed, clean reload (no errors)
 - [x] Fix spam filter: SendGrid domain auth for `fridaymailer.com` verified ✅ (DKIM CNAMEs propagated + validated via API)
 - [x] Update `SENDGRID_VERIFIED_SENDER` to `noreply@fridaymailer.com` in Cloud Run (revision 00028)
 - [x] Patch all 17 existing accounts with `email-receive` permission (live against Stalwart VM)
