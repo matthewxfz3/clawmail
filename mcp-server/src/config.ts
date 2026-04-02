@@ -7,7 +7,7 @@ export const config = {
   },
   sendgrid: {
     apiKey: process.env.SENDGRID_API_KEY ?? (() => { throw new Error("SENDGRID_API_KEY env var required") })(),
-    verifiedSender: process.env.SENDGRID_VERIFIED_SENDER ?? "noreply@fridaymail.duckdns.org",
+    verifiedSender: process.env.SENDGRID_VERIFIED_SENDER ?? (() => { throw new Error("SENDGRID_VERIFIED_SENDER env var required") })(),
   },
   auth: {
     // Comma-separated list of valid API keys
