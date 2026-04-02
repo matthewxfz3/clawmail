@@ -5,7 +5,7 @@ import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
 import { JmapClient } from "./clients/jmap.js";
-import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
+import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt, getAccountSendCount } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Session cookie — HMAC-SHA256 signed, 7-day expiry
@@ -380,36 +380,22 @@ async function buildOverview(serviceUrl: string, accounts: Array<{ email: string
 // Tab: Inboxes
 // ---------------------------------------------------------------------------
 
-function buildInboxesTab(accounts: Array<{ email: string; name: string }>): string {
-  const accountList = accounts.length === 0
-    ? `<div class="card"><h2>Accounts</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`
-    : (() => {
-        const rows = accounts.map((a, i) => {
-          const ts = getAccountCreatedAt(a.email);
-          const createdStr = ts
-            ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-            : `<span style="color:#bbb">—</span>`;
-          return `
-            <tr>
-              <td style="color:#aaa;font-size:.78rem;width:28px;text-align:right;padding-right:12px">${i + 1}</td>
-              <td><span style="font-weight:600;color:#1a1a2e">${escHtml(a.email)}</span></td>
-              <td style="color:#888;font-size:.82rem;white-space:nowrap">${createdStr}</td>
-              <td style="width:120px;text-align:right">
-                <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 12px">View inbox →</a>
-              </td>
-            </tr>`;
-        }).join("");
-        return `
-          <div class="card">
-            <h2>Agent accounts (${accounts.length})</h2>
-            <table>
-              <thead><tr><th style="width:28px"></th><th>Email address</th><th>Created</th><th></th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
-            <p style="font-size:.72rem;color:#bbb;margin-top:10px">Created time only tracked for accounts provisioned during the current server session.</p>
-          </div>`;
-      })();
+async function buildInboxesTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
+  // Fetch inbox counts for all accounts in parallel (capped at 50 to avoid overloading Stalwart).
+  // Same pattern as the Metrics tab — lightweight JMAP calculateTotal queries.
+  const capped = accounts.slice(0, 50);
+  const inboxCounts = await Promise.allSettled(
+    capped.map(async (a) => {
+      const count = await new JmapClient(a.email).countEmails("Inbox");
+      return { email: a.email, count };
+    })
+  );
+  const countMap = new Map<string, number>();
+  for (const r of inboxCounts) {
+    if (r.status === "fulfilled") countMap.set(r.value.email, r.value.count);
+  }
 
+  // Test email form (shown first)
   const fromOptions = accounts.map(a =>
     `<option value="${escHtml(a.email)}">${escHtml(a.email)}</option>`
   ).join("");
@@ -417,7 +403,7 @@ function buildInboxesTab(accounts: Array<{ email: string; name: string }>): stri
   const testEmailForm = `
     <div class="card">
       <h2>Send test email</h2>
-      <p style="font-size:.83rem;color:#666;margin-bottom:18px">Send a test message to verify the send pipeline is working end-to-end.</p>
+      <p style="font-size:.83rem;color:#666;margin-bottom:18px">Verify the send pipeline end-to-end.</p>
       <form method="POST" action="/dashboard/action/send-test-email" style="display:grid;gap:14px;max-width:520px">
         <div>
           <label>From account</label>
@@ -429,15 +415,62 @@ function buildInboxesTab(accounts: Array<{ email: string; name: string }>): stri
         <div><label>Subject</label><input type="text" name="subject" value="Test email from Clawmail" required></div>
         <div>
           <label>Body</label>
-          <textarea name="body" rows="4" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical">Hello — this is a test email sent from the Clawmail dashboard at ${new Date().toISOString()}.\n\nIf you received this, the send pipeline is working correctly.</textarea>
+          <textarea name="body" rows="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical">Hello — this is a test email sent from the Clawmail dashboard.\n\nIf you received this, the send pipeline is working correctly.</textarea>
         </div>
         <div>
-          <button type="submit" class="btn btn-primary" style="padding:9px 22px;font-size:.88rem">Send test email →</button>
+          <button type="submit" class="btn btn-primary" style="padding:9px 22px;font-size:.88rem">Send →</button>
         </div>
       </form>
     </div>`;
 
-  return accountList + testEmailForm;
+  // Account list (shown second)
+  const accountList = accounts.length === 0
+    ? `<div class="card"><h2>Agent accounts</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`
+    : (() => {
+        const rows = accounts.map((a, i) => {
+          const ts = getAccountCreatedAt(a.email);
+          const createdStr = ts
+            ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+            : `<span style="color:#ccc">—</span>`;
+          const received = countMap.has(a.email) ? String(countMap.get(a.email)) : `<span style="color:#ccc">—</span>`;
+          const sent = getAccountSendCount(a.email) > 0 ? String(getAccountSendCount(a.email)) : `<span style="color:#ccc">0</span>`;
+          return `
+            <tr>
+              <td style="color:#aaa;font-size:.78rem;width:28px;text-align:right;padding-right:12px">${i + 1}</td>
+              <td><span style="font-weight:600;color:#1a1a2e">${escHtml(a.email)}</span></td>
+              <td style="color:#888;font-size:.82rem;white-space:nowrap">${createdStr}</td>
+              <td class="num">${sent}</td>
+              <td class="num">${received}</td>
+              <td style="width:120px;text-align:right">
+                <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 12px">View inbox →</a>
+              </td>
+            </tr>`;
+        }).join("");
+        const cappedNote = accounts.length > 50
+          ? `<p style="font-size:.72rem;color:#aaa;margin-top:8px">Inbox counts shown for first 50 of ${accounts.length} accounts.</p>`
+          : "";
+        return `
+          <div class="card">
+            <h2>Agent accounts (${accounts.length})</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:28px"></th>
+                  <th>Email address</th>
+                  <th>Created</th>
+                  <th style="text-align:right">Sent <span style="font-weight:400;color:#bbb;font-size:.72rem">(session)</span></th>
+                  <th style="text-align:right">In inbox</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+            <p style="font-size:.72rem;color:#bbb;margin-top:10px">Sent count tracked for this server session only. Created time only recorded for accounts provisioned this session.</p>
+            ${cappedNote}
+          </div>`;
+      })();
+
+  return testEmailForm + accountList;
 }
 
 // ---------------------------------------------------------------------------
@@ -762,7 +795,7 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "
 
   let content: string;
   if (tab === "inboxes") {
-    content = (flashBanner ? `<div>${flashBanner}</div>` : "") + buildInboxesTab(accounts);
+    content = (flashBanner ? `<div>${flashBanner}</div>` : "") + await buildInboxesTab(accounts);
   } else if (tab === "metrics") {
     content = await buildMetricsTab(accounts);
   } else {

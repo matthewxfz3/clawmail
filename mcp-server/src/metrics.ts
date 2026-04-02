@@ -64,6 +64,9 @@ function takeSample(): void {
 /** Account creation registry — tracks when accounts were created this session. */
 const accountRegistry = new Map<string, number>(); // email → createdAt ms
 
+/** Per-account send counter — tracks send_email calls this session. */
+const accountSendCounts = new Map<string, number>(); // email → send count
+
 // Seed immediately so the chart always has at least one data point.
 takeSample();
 setInterval(takeSample, 60_000).unref(); // .unref() so this doesn't prevent clean shutdown
@@ -107,6 +110,16 @@ export function recordAccountCreated(email: string): void {
 /** Returns the creation timestamp for an account created in this session, or undefined. */
 export function getAccountCreatedAt(email: string): number | undefined {
   return accountRegistry.get(email);
+}
+
+/** Increment the send counter for a given account. */
+export function recordAccountSend(email: string): void {
+  accountSendCounts.set(email, (accountSendCounts.get(email) ?? 0) + 1);
+}
+
+/** Returns the number of emails sent from this account in this session. */
+export function getAccountSendCount(email: string): number {
+  return accountSendCounts.get(email) ?? 0;
 }
 
 export function getMetrics(): Readonly<MetricsStore> {
