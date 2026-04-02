@@ -4,7 +4,7 @@ import { config } from "./config.js";
 import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail } from "./tools/mailbox.js";
 import { JmapClient } from "./clients/jmap.js";
-import { getMetrics } from "./metrics.js";
+import { getMetrics, getSamples } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Session cookie — HMAC-SHA256 signed, 7-day expiry
@@ -380,15 +380,23 @@ function buildInboxesTab(accounts: Array<{ email: string; name: string }>): stri
   if (accounts.length === 0) {
     return `<div class="card"><h2>Inboxes</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`;
   }
-  const cards = accounts.map(a => `
-    <div class="account-card">
-      <div class="email">${escHtml(a.email)}</div>
-      <div class="actions">
-        <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}">View Inbox →</a>
-      </div>
-    </div>
+  const rows = accounts.map((a, i) => `
+    <tr>
+      <td style="color:#888;font-size:.78rem;width:32px;text-align:right;padding-right:14px">${i + 1}</td>
+      <td><span style="font-weight:600;color:#1a1a2e">${escHtml(a.email)}</span></td>
+      <td style="width:130px">
+        <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 12px">View inbox →</a>
+      </td>
+    </tr>
   `).join("");
-  return `<div class="card"><h2>Agent accounts (${accounts.length})</h2><div class="account-grid">${cards}</div></div>`;
+  return `
+    <div class="card">
+      <h2>Agent accounts (${accounts.length})</h2>
+      <table>
+        <thead><tr><th style="width:32px"></th><th>Email address</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +478,17 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
     </div>
 
     <div class="card">
+      <h2>Activity over time</h2>
+      <p style="font-size:.78rem;color:#888;margin-bottom:16px">Sampled every 60 s — cumulative since process start. Hover for values.</p>
+      <div style="position:relative;height:240px"><canvas id="chart-traffic"></canvas></div>
+      <div style="margin-top:28px">
+        <p style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Errors per sample interval</p>
+        <div style="position:relative;height:140px"><canvas id="chart-errors"></canvas></div>
+      </div>
+      <div class="warn-note" style="margin-top:16px">⚠ Counters reset on instance restart. Sampling since: ${escHtml(startedAt)}</div>
+    </div>
+
+    <div class="card">
       <h2>MCP tool call breakdown</h2>
       <table>
         <thead><tr><th>Tool</th><th style="text-align:right">Calls</th><th style="text-align:right">Errors</th><th style="text-align:right">Error rate</th><th style="text-align:right">Rate limit hits</th><th style="text-align:right">Last called</th></tr></thead>
@@ -483,7 +502,6 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
           <td></td>
         </tr></tfoot>
       </table>
-      <div class="warn-note">⚠ Counters are in-memory and reset when the Cloud Run instance restarts. Live since: ${escHtml(startedAt)}</div>
     </div>
 
     <div class="card">
@@ -500,6 +518,110 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
       ${statusGroup(checkMcpServerGroup())}
       ${statusGroup(checkSendgridGroup())}
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+    (function() {
+      fetch('/dashboard/metrics-data', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var s = data.samples;
+          if (!s || s.length === 0) return;
+
+          var labels = s.map(function(p) {
+            return new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          });
+
+          // Net accounts created this session (cumulative)
+          var netAccounts = s.map(function(p) { return p.createAccountCalls - p.deleteAccountCalls; });
+
+          new Chart(document.getElementById('chart-traffic'), {
+            type: 'line',
+            data: {
+              labels: labels,
+              datasets: [
+                {
+                  label: 'MCP requests',
+                  data: s.map(function(p) { return p.totalRequests; }),
+                  borderColor: '#4f46e5',
+                  backgroundColor: 'rgba(79,70,229,0.08)',
+                  fill: true,
+                  tension: 0.35,
+                  pointRadius: 3,
+                  pointHoverRadius: 6,
+                },
+                {
+                  label: 'Emails sent',
+                  data: s.map(function(p) { return p.sendEmailCalls; }),
+                  borderColor: '#22c55e',
+                  backgroundColor: 'rgba(34,197,94,0.06)',
+                  fill: true,
+                  tension: 0.35,
+                  pointRadius: 3,
+                  pointHoverRadius: 6,
+                },
+                {
+                  label: 'Net accounts created',
+                  data: netAccounts,
+                  borderColor: '#f59e0b',
+                  backgroundColor: 'transparent',
+                  fill: false,
+                  tension: 0.35,
+                  pointRadius: 3,
+                  pointHoverRadius: 6,
+                  borderDash: [4, 3],
+                },
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: { mode: 'index', intersect: false },
+              plugins: {
+                legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12 } },
+                tooltip: { enabled: true }
+              },
+              scales: {
+                y: { beginAtZero: true, ticks: { precision: 0 } }
+              }
+            }
+          });
+
+          // Error deltas per interval
+          var errDeltas = s.map(function(p, i) {
+            return i === 0 ? p.totalErrors : Math.max(0, p.totalErrors - s[i - 1].totalErrors);
+          });
+
+          new Chart(document.getElementById('chart-errors'), {
+            type: 'bar',
+            data: {
+              labels: labels,
+              datasets: [{
+                label: 'Errors',
+                data: errDeltas,
+                backgroundColor: 'rgba(239,68,68,0.65)',
+                borderColor: '#ef4444',
+                borderWidth: 1,
+                borderRadius: 3,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: { mode: 'index', intersect: false },
+              plugins: {
+                legend: { display: false },
+                tooltip: { enabled: true }
+              },
+              scales: {
+                y: { beginAtZero: true, ticks: { precision: 0 } }
+              }
+            }
+          });
+        })
+        .catch(function() { /* chart stays blank if fetch fails */ });
+    })();
+    </script>
   `;
 }
 
@@ -666,6 +788,13 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   if (!isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(loginPage());
+    return;
+  }
+
+  // GET /dashboard/metrics-data — JSON endpoint for Chart.js
+  if (path === "/dashboard/metrics-data") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ samples: getSamples() }));
     return;
   }
 
