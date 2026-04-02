@@ -15,6 +15,8 @@ interface MetricsStore {
   totalRequests: number;
   totalErrors: number;
   totalRateLimitHits: number;
+  /** Latest known total emails across all inboxes — updated externally on each metrics page load. */
+  inboxTotal: number;
 }
 
 const store: MetricsStore = {
@@ -23,6 +25,7 @@ const store: MetricsStore = {
   totalRequests: 0,
   totalErrors: 0,
   totalRateLimitHits: 0,
+  inboxTotal: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,6 +40,7 @@ export interface MetricsSample {
   sendEmailCalls: number;      // cumulative send_email invocations
   createAccountCalls: number;  // cumulative create_account invocations
   deleteAccountCalls: number;  // cumulative delete_account invocations
+  inboxTotal: number;          // absolute total emails across all inboxes at sample time
 }
 
 const MAX_SAMPLES = 120;
@@ -51,10 +55,14 @@ function takeSample(): void {
     sendEmailCalls: store.tools["send_email"]?.calls ?? 0,
     createAccountCalls: store.tools["create_account"]?.calls ?? 0,
     deleteAccountCalls: store.tools["delete_account"]?.calls ?? 0,
+    inboxTotal: store.inboxTotal,
   };
   samples.push(snap);
   if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
 }
+
+/** Account creation registry — tracks when accounts were created this session. */
+const accountRegistry = new Map<string, number>(); // email → createdAt ms
 
 // Seed immediately so the chart always has at least one data point.
 takeSample();
@@ -84,6 +92,21 @@ export function recordRateLimit(tool: string): void {
   const m = getOrCreate(tool);
   m.rateLimitHits++;
   store.totalRateLimitHits++;
+}
+
+/** Update the running inbox total — call whenever inbox counts are fetched. */
+export function setInboxTotal(n: number): void {
+  store.inboxTotal = n;
+}
+
+/** Record that an account was created in this session. */
+export function recordAccountCreated(email: string): void {
+  accountRegistry.set(email, Date.now());
+}
+
+/** Returns the creation timestamp for an account created in this session, or undefined. */
+export function getAccountCreatedAt(email: string): number | undefined {
+  return accountRegistry.get(email);
 }
 
 export function getMetrics(): Readonly<MetricsStore> {

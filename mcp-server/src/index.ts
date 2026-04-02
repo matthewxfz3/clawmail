@@ -16,7 +16,7 @@ import {
 } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
 import { handleDashboard } from "./dashboard.js";
-import { recordCall, recordError, recordRateLimit } from "./metrics.js";
+import { recordCall, recordError, recordRateLimit, recordAccountCreated } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Rate limiter — sliding window using timestamps per (apiKey, operation) key
@@ -100,6 +100,7 @@ function createMcpServer(apiKey: string): McpServer {
       }
       try {
         const result = await toolCreateAccount(args.local_part);
+        recordAccountCreated(result.email);
         return okContent(result);
       } catch (err) {
         recordError("create_account");
