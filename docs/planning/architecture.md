@@ -334,3 +334,30 @@ A sequential smoke test to confirm the full system is wired up correctly after d
 ### 6. Cleanup
 - [ ] Delete the test account (or leave for manual inspection)
 - [ ] Review Stalwart logs on VM for any errors during the test run
+
+---
+
+## Future Work
+
+### Dashboard UI
+
+Build a lightweight web dashboard for operators to monitor and inspect the service.
+
+**Metrics panel**
+- Active account count and recent account creation activity
+- Email volume over time (inbound vs. outbound)
+- Send success/failure rate (pulled from SendGrid event webhooks or Cloud Run logs)
+- Cloud Run request latency and error rate
+- Cloud SQL storage utilization
+
+**Inbox visualization**
+- List all accounts with message counts and last-activity timestamps
+- Drill into any account's inbox: subject, from, received time, preview
+- Read full email body inline
+- Delete emails or accounts directly from the UI
+
+**Tech considerations**
+- Could be a simple static SPA (React or plain HTML + JS) served from Cloud Run or GCS + Cloud CDN
+- Auth: same `X-API-Key` header passed from a login screen, or Cloud IAP for Google-identity gating
+- Data source: calls the existing MCP server HTTP API, or a new thin REST API alongside it
+- Alternatively, embed directly in the MCP server as an additional route (`GET /dashboard`) to avoid a separate deployment
