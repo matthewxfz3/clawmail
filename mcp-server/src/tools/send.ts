@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { config } from "../config.js";
+import { JmapClient } from "../clients/jmap.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,6 +120,19 @@ export async function toolSendEmail(
     bcc: bcc.length > 0 ? bcc.join(", ") : undefined,
     subject,
     text: body,
+  });
+
+  // Save a copy to the sender's Sent folder via JMAP.
+  // Fire-and-forget: don't fail the send if this errors.
+  new JmapClient(fromEmail).saveToSent({
+    from: fromEmail,
+    to: toList,
+    cc: cc.length > 0 ? cc : undefined,
+    subject,
+    body,
+    sentAt: queuedAt,
+  }).catch((err) => {
+    console.warn(`[send] saveToSent failed for ${fromEmail}:`, err instanceof Error ? err.message : String(err));
   });
 
   const recipientCount = toList.length + cc.length + bcc.length;
