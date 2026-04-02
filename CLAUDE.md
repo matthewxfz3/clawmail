@@ -194,8 +194,8 @@ The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
 
 ## Known limitations / future work
 
-- **Sender verification:** `SENDGRID_VERIFIED_SENDER` currently falls back to `matthew@sanchi.ai` (a personal address) until `noreply@fridaymail.duckdns.org` is verified in SendGrid. The verification email was sent but inbound SMTP delivery needs to be confirmed working.
-- **Inbound SMTP testing:** Port 25 times out from residential IPs (ISP blocks) but should work from external mail servers. MX record: `50 fridaymail.duckdns.org.` → `35.203.162.161`.
+- **Sender verification:** `SENDGRID_VERIFIED_SENDER` currently falls back to `<PLACEHOLDER>` (a personal address) until `noreply@fridaymail.duckdns.org` is verified in SendGrid. The verification email was sent but inbound SMTP delivery needs to be confirmed working.
+- **Inbound SMTP testing:** Port 25 times out from residential IPs (ISP blocks) but should work from external mail servers. MX record: `fridaymail.duckdns.org.` → `<IP>`.
 - **User JMAP auth:** Regular user accounts (created via Management API) fail HTTP Basic Auth on JMAP endpoints with 401. Root cause unclear — possibly a Stalwart config gap. Workaround: admin authenticates and resolves account IDs via Principals API.
-- **DuckDNS DNS constraints:** `fridaymail.duckdns.org` only supports A records via DuckDNS API. Cannot add CNAME/TXT records needed for SendGrid domain authentication or DKIM. A proper domain with full DNS control is needed for production email deliverability.
+- **DuckDNS DNS constraints:** `<IPD>` only supports A records via DuckDNS API. Cannot add CNAME/TXT records needed for SendGrid domain authentication or DKIM. A proper domain with full DNS control is needed for production email deliverability.
 - **No test suite yet:** The project has no unit or integration tests. The Stalwart management client and JMAP client would benefit from mocked tests.
