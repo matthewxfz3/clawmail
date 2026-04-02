@@ -10,7 +10,7 @@ email delivery for Clawmail on `fridaymailer.com`. Updated to avoid going in loo
 | Component | Status | Notes |
 |-----------|--------|-------|
 | DNS (MX, A, SPF, DMARC) | ✅ Working | Propagated, verified via `dig` |
-| Stalwart v0.15 running | ✅ Working | On `35.203.162.161`, bind-mount at `/opt/stalwart-data:/opt/stalwart` |
+| Stalwart v0.15 running | ✅ Working | On `<STALWART_VM_IP>`, bind-mount at `/opt/stalwart-data:/opt/stalwart` |
 | Admin auth | ✅ Working | `[authentication.fallback-admin]` loaded from config |
 | Domain principal | ✅ Working | `fridaymailer.com` principal exists in Stalwart |
 | Queue routing | ✅ Working | Local → `'local'` route, external → sendgrid relay |
@@ -32,10 +32,10 @@ email delivery for Clawmail on `fridaymailer.com`. Updated to avoid going in loo
 needed for SendGrid domain auth or DKIM. Needed a proper domain.
 
 ### What was done
-1. Obtained `fridaymailer.com` (already in GCP project `ai-for-marketing-468406`)
+1. Obtained `fridaymailer.com` (already in GCP project `<GCP_PROJECT>`)
 2. Created Cloud DNS zone `fridaymailer-com`
 3. Added records:
-   - `A fridaymailer.com → 35.203.162.161` (Stalwart VM static IP)
+   - `A fridaymailer.com → <STALWART_VM_IP>` (Stalwart VM static IP)
    - `MX 10 fridaymailer.com.` (self-hosted MX)
    - `TXT "v=spf1 a mx ~all"` (SPF)
    - `TXT "_dmarc: v=DMARC1; p=none; rua=mailto:dmarc@fridaymailer.com"` (DMARC)
@@ -51,7 +51,7 @@ needed for SendGrid domain auth or DKIM. Needed a proper domain.
 **Hypothesis**: `stalwartlabs/mail-server:latest` should pull from Docker Hub.
 **Result**: FAIL — image no longer exists on Docker Hub. Docker Hub returned 404/403.
 **Fix**: Pull `stalwartlabs/stalwart:latest` from GHCR, push to Artifact Registry at
-`us-west1-docker.pkg.dev/ai-for-marketing-468406/clawmail/stalwart:latest`.
+`us-west1-docker.pkg.dev/<GCP_PROJECT>/clawmail/stalwart:latest`.
 The startup script was updated to pull from Artifact Registry.
 
 ### Exp-02: GHCR image 403
@@ -101,7 +101,7 @@ curl -X PATCH \
   -H "Content-Type: application/json" \
   -u "admin:$PASS" \
   -d '[{"action":"addItem","field":"enabledPermissions","value":"email-receive"}]' \
-  http://35.203.162.161:8080/api/principal/delivery-test
+  http://<STALWART_VM_IP>:8080/api/principal/delivery-test
 ```
 **Fix needed in code**: `createAccount` in `stalwart-mgmt.ts` must include
 `enabledPermissions: ["email-receive"]` in the POST body. **NOT YET DEPLOYED.**
@@ -112,7 +112,7 @@ curl -X PATCH \
 mailbox with id=c (Junk Mail), not id=a (Inbox).
 **Hypothesis**: Stalwart spam filter is scoring SendGrid-relayed mail as junk.
 **Evidence**:
-- Email FROM `matthew@sanchi.ai` sent via SendGrid's SMTP relay
+- Email FROM `<SENDGRID_VERIFIED_SENDER>` sent via SendGrid's SMTP relay
 - SendGrid IP is not in SPF for `fridaymailer.com` (SPF: `v=spf1 a mx ~all`)
 - From address doesn't match the verified sender domain
 - Stalwart scored it as spam → delivered to Junk folder
@@ -146,17 +146,17 @@ when the domain was `fridaymail.duckdns.org`. The DSNs are addressed to the old 
 
 ### Check Stalwart queue
 ```bash
-curl -s -u "admin:$PASS" http://35.203.162.161:8080/api/queue/messages?limit=20 | jq .
+curl -s -u "admin:$PASS" http://<STALWART_VM_IP>:8080/api/queue/messages?limit=20 | jq .
 ```
 
 ### Check all mailboxes for an account (JMAP)
 ```bash
 # Get session
-SESSION=$(curl -s -u "admin:$PASS" http://35.203.162.161:8080/.well-known/jmap)
+SESSION=$(curl -s -u "admin:$PASS" http://<STALWART_VM_IP>:8080/.well-known/jmap)
 ACCOUNT_ID=$(echo $SESSION | jq -r '.accounts | keys[0]')
 
 # Get all mailboxes
-curl -s -u "admin:$PASS" http://35.203.162.161:8080/jmap \
+curl -s -u "admin:$PASS" http://<STALWART_VM_IP>:8080/jmap \
   -H 'Content-Type: application/json' \
   -d "{\"using\":[\"urn:ietf:params:jmap:core\",\"urn:ietf:params:jmap:mail\"],\"methodCalls\":[[\"Mailbox/get\",{\"accountId\":\"$ACCOUNT_ID\",\"ids\":null},\"r1\"]]}" \
   | jq '.methodResponses[0][1].list[] | {id, name, totalEmails, unreadEmails}'
@@ -165,11 +165,11 @@ curl -s -u "admin:$PASS" http://35.203.162.161:8080/jmap \
 ### Get JMAP account ID for a user (via Principals API)
 ```bash
 # Get admin's principals accountId
-PRINCIPALS_ID=$(curl -s -u "admin:$PASS" http://35.203.162.161:8080/.well-known/jmap \
+PRINCIPALS_ID=$(curl -s -u "admin:$PASS" http://<STALWART_VM_IP>:8080/.well-known/jmap \
   | jq -r '."primaryAccounts"["urn:ietf:params:jmap:principals"]')
 
 # List all principals to find user's opaque ID
-curl -s -u "admin:$PASS" http://35.203.162.161:8080/jmap \
+curl -s -u "admin:$PASS" http://<STALWART_VM_IP>:8080/jmap \
   -H 'Content-Type: application/json' \
   -d "{\"using\":[\"urn:ietf:params:jmap:core\",\"urn:ietf:params:jmap:principals\"],\"methodCalls\":[[\"Principal/query\",{\"accountId\":\"$PRINCIPALS_ID\"},\"r1\"]]}" \
   | jq .
@@ -177,7 +177,7 @@ curl -s -u "admin:$PASS" http://35.203.162.161:8080/jmap \
 
 ### Check account permissions
 ```bash
-curl -s -u "admin:$PASS" http://35.203.162.161:8080/api/principal/ACCOUNT_NAME | jq .
+curl -s -u "admin:$PASS" http://<STALWART_VM_IP>:8080/api/principal/ACCOUNT_NAME | jq .
 ```
 
 ### Add email-receive permission to existing account
@@ -186,7 +186,7 @@ curl -X PATCH \
   -H "Content-Type: application/json" \
   -u "admin:$PASS" \
   -d '[{"action":"addItem","field":"enabledPermissions","value":"email-receive"}]' \
-  http://35.203.162.161:8080/api/principal/ACCOUNT_NAME
+  http://<STALWART_VM_IP>:8080/api/principal/ACCOUNT_NAME
 ```
 
 ### Check Stalwart logs for SMTP activity
@@ -198,7 +198,7 @@ docker logs stalwart 2>&1 | grep -E "(RCPT|DATA|550|250|queued|delivered)" | tai
 ### Trigger queue flush
 ```bash
 curl -X POST -u "admin:$PASS" \
-  http://35.203.162.161:8080/api/queue/retry
+  http://<STALWART_VM_IP>:8080/api/queue/retry
 ```
 
 ---
@@ -208,7 +208,7 @@ curl -X POST -u "admin:$PASS" \
 ### H1: Spam filter — emails landing in Junk Mail
 **Root cause**: SPF alignment failure. SendGrid sends from its own IP pool, but
 `fridaymailer.com` SPF only lists `a mx ~all` (the VM's IP). SendGrid IPs fail SPF.
-Additionally, the `From:` header uses `matthew@sanchi.ai`, a different domain.
+Additionally, the `From:` header uses `<SENDGRID_VERIFIED_SENDER>`, a different domain.
 
 **Options to fix** (in order of preference):
 1. **Add SendGrid to SPF**: `v=spf1 a mx include:sendgrid.net ~all`

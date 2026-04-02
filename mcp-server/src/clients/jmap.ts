@@ -615,3 +615,11 @@ export class JmapClient {
     return list.map(rawToSummary);
   }
 }
+
+/** Reset all module-level caches. For use in tests only. */
+export function clearJmapCache(): void {
+  cachedSession = undefined;
+  cachedSessionAt = 0;
+  userContextCache.clear();
+  jmapIdCache.clear();
+}

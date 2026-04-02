@@ -165,7 +165,7 @@ gcloud run services update clawmail-mcp \
   --image us-west1-docker.pkg.dev/<PROJECT_ID>/clawmail/mcp-server:latest
 ```
 
-The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
+The live endpoint is available via `gcloud run services describe clawmail-mcp --region us-west1 --project $GCP_PROJECT --format 'value(status.url)'`.
 
 ---
 
@@ -173,7 +173,7 @@ The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
 
 | Variable | Where set | Purpose |
 |----------|-----------|---------|
-| `DOMAIN` | Cloud Run | Mail domain (e.g. `fridaymail.duckdns.org`) |
+| `DOMAIN` | Cloud Run | Mail domain (e.g. `mail.example.com`) |
 | `STALWART_URL` | Cloud Run | Internal URL to Stalwart JMAP/Management API |
 | `STALWART_ADMIN_PASSWORD` | Secret Manager `stalwart-admin-password` | Stalwart HTTP Basic Auth |
 | `SENDGRID_API_KEY` | Secret Manager `sendgrid-api-key` | SMTP password for `smtp.sendgrid.net` |
@@ -184,9 +184,9 @@ The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
 
 ## GCP project
 
-- **Project:** `<PROJECT_ID>`
+- **Project:** set in `GCP_PROJECT` env / Terraform variables
 - **Region:** `us-west1`
-- **Stalwart VM IP:** `35.203.162.161` (static)
+- **Stalwart VM IP:** stored in Terraform state / GCE console (static IP reserved in `infra/compute.tf`)
 - **Stalwart ports accessible:** `8080` (JMAP + Management API, VPC-internal + Cloud Run), `25` (inbound SMTP), `143`/`993` (IMAP)
 - **Port 587 (SMTP submission):** NOT exposed in production docker-compose — outbound send goes via SendGrid directly from the MCP server instead
 
@@ -194,8 +194,7 @@ The live endpoint is: `https://clawmail-mcp-880482593851.us-west1.run.app/mcp`
 
 ## Known limitations / future work
 
-- **Sender verification:** `SENDGRID_VERIFIED_SENDER` currently falls back to `<PLACEHOLDER>` (a personal address) until `noreply@fridaymail.duckdns.org` is verified in SendGrid. The verification email was sent but inbound SMTP delivery needs to be confirmed working.
-- **Inbound SMTP testing:** Port 25 times out from residential IPs (ISP blocks) but should work from external mail servers. MX record: `fridaymail.duckdns.org.` → `<IP>`.
-- **User JMAP auth:** Regular user accounts (created via Management API) fail HTTP Basic Auth on JMAP endpoints with 401. Root cause unclear — possibly a Stalwart config gap. Workaround: admin authenticates and resolves account IDs via Principals API.
-- **DuckDNS DNS constraints:** `<IPD>` only supports A records via DuckDNS API. Cannot add CNAME/TXT records needed for SendGrid domain authentication or DKIM. A proper domain with full DNS control is needed for production email deliverability.
+- **Spam filter:** Inbound emails may land in Junk Mail. SendGrid domain auth (DKIM/DMARC alignment) is now configured — spam scoring should improve. See `docs/debugging-inbound-delivery.md` for history.
+- **Inbound SMTP testing:** Port 25 times out from residential IPs (ISP blocks) but works from external mail servers via the published MX record.
+- **User JMAP auth:** Direct HTTP Basic Auth for regular accounts returns 401. Workaround implemented: master-user impersonation (`user*admin:pass`) in `jmap.ts` gives a session scoped to the target user.
 - **No test suite yet:** The project has no unit or integration tests. The Stalwart management client and JMAP client would benefit from mocked tests.
