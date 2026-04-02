@@ -70,6 +70,13 @@ variable "mcp_api_key" {
   sensitive   = true
 }
 
+variable "dashboard_password" {
+  description = "Password for the Clawmail web dashboard (username is DASHBOARD_USER, default: admin)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "mcp_server_image" {
   description = "Container image for the Clawmail MCP server"
   type        = string

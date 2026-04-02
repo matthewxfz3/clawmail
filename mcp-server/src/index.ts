@@ -15,6 +15,7 @@ import {
   toolSearchEmails,
 } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
+import { handleDashboard } from "./dashboard.js";
 
 // ---------------------------------------------------------------------------
 // Rate limiter — sliding window using timestamps per (apiKey, operation) key
@@ -286,6 +287,12 @@ function authenticate(req: IncomingMessage, res: ServerResponse): string | null 
 
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const { pathname } = new URL(req.url ?? "/", `http://localhost`);
+
+  // Dashboard routes — no MCP auth required (uses its own session cookie)
+  if (pathname.startsWith("/dashboard")) {
+    await handleDashboard(req, res);
+    return;
+  }
 
   if (pathname !== "/mcp") {
     res.writeHead(404, { "Content-Type": "application/json" });
