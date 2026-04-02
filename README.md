@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Claw Email" width="100%">
+</p>
+
 # Clawmail
+
+> Give every AI agent its own email address — provisioned in seconds, managed via tool calls, ready for the real world.
 
 An MCP (Model Context Protocol) service that gives AI agents a full email capability — create ad-hoc accounts, manage inboxes, send and receive mail — all via tool calls.
 
