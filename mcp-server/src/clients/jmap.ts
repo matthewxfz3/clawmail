@@ -403,11 +403,9 @@ export class JmapClient {
   async countEmails(folder = "Inbox"): Promise<number> {
     const accountId = await this.getAccountId();
     const mailboxId = await this.getMailboxId(folder);
+    if (mailboxId === null) return 0;
 
-    const queryFilter: Record<string, unknown> = {};
-    if (mailboxId !== null) {
-      queryFilter["inMailbox"] = mailboxId;
-    }
+    const queryFilter: Record<string, unknown> = { inMailbox: mailboxId };
 
     const responses = await this.request([
       [

@@ -5,7 +5,7 @@ import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
 import { JmapClient } from "./clients/jmap.js";
-import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt, getAccountSendCount } from "./metrics.js";
+import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Session cookie — HMAC-SHA256 signed, 7-day expiry
@@ -381,18 +381,29 @@ async function buildOverview(serviceUrl: string, accounts: Array<{ email: string
 // ---------------------------------------------------------------------------
 
 async function buildInboxesTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
-  // Fetch inbox counts for all accounts in parallel (capped at 50 to avoid overloading Stalwart).
-  // Same pattern as the Metrics tab — lightweight JMAP calculateTotal queries.
+  // Fetch inbox + sent counts for all accounts in parallel (capped at 50).
   const capped = accounts.slice(0, 50);
-  const inboxCounts = await Promise.allSettled(
-    capped.map(async (a) => {
-      const count = await new JmapClient(a.email).countEmails("Inbox");
-      return { email: a.email, count };
-    })
-  );
+  const [inboxCounts, sentCounts] = await Promise.all([
+    Promise.allSettled(
+      capped.map(async (a) => {
+        const count = await new JmapClient(a.email).countEmails("Inbox");
+        return { email: a.email, count };
+      })
+    ),
+    Promise.allSettled(
+      capped.map(async (a) => {
+        const count = await new JmapClient(a.email).countEmails("Sent");
+        return { email: a.email, count };
+      })
+    ),
+  ]);
   const countMap = new Map<string, number>();
   for (const r of inboxCounts) {
     if (r.status === "fulfilled") countMap.set(r.value.email, r.value.count);
+  }
+  const sentCountMap = new Map<string, number>();
+  for (const r of sentCounts) {
+    if (r.status === "fulfilled") sentCountMap.set(r.value.email, r.value.count);
   }
 
   // Test email form (shown first)
@@ -433,7 +444,8 @@ async function buildInboxesTab(accounts: Array<{ email: string; name: string }>)
             ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
             : `<span style="color:#ccc">—</span>`;
           const received = countMap.has(a.email) ? String(countMap.get(a.email)) : `<span style="color:#ccc">—</span>`;
-          const sent = getAccountSendCount(a.email) > 0 ? String(getAccountSendCount(a.email)) : `<span style="color:#ccc">0</span>`;
+          const sentVal = sentCountMap.get(a.email);
+          const sent = sentVal !== undefined ? String(sentVal) : `<span style="color:#ccc">—</span>`;
           return `
             <tr>
               <td style="color:#aaa;font-size:.78rem;width:28px;text-align:right;padding-right:12px">${i + 1}</td>
@@ -458,14 +470,14 @@ async function buildInboxesTab(accounts: Array<{ email: string; name: string }>)
                   <th style="width:28px"></th>
                   <th>Email address</th>
                   <th>Created</th>
-                  <th style="text-align:right">Sent <span style="font-weight:400;color:#bbb;font-size:.72rem">(session)</span></th>
+                  <th style="text-align:right">Sent</th>
                   <th style="text-align:right">In inbox</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>${rows}</tbody>
             </table>
-            <p style="font-size:.72rem;color:#bbb;margin-top:10px">Sent count tracked for this server session only. Created time only recorded for accounts provisioned this session.</p>
+            <p style="font-size:.72rem;color:#bbb;margin-top:10px">Created time only recorded for accounts provisioned during this server session.</p>
             ${cappedNote}
           </div>`;
       })();
