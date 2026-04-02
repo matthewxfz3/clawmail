@@ -37,15 +37,39 @@ async function assertOk(res: Response, context: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Default quota constants
+// Default quota constant
 // ---------------------------------------------------------------------------
 
-const DEFAULT_QUOTA_MESSAGES = 10_000;
-const DEFAULT_QUOTA_SIZE = 1_073_741_824; // 1 GiB
+const DEFAULT_QUOTA_BYTES = 1_073_741_824; // 1 GiB disk quota
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Ensure the mail domain principal exists in Stalwart.
+ * Safe to call multiple times — silently ignores duplicate errors.
+ */
+export async function ensureDomainExists(): Promise<void> {
+  const res = await stalwartFetch("/api/principal", {
+    method: "POST",
+    body: JSON.stringify({ type: "domain", name: config.domain }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to ensure domain exists: HTTP ${res.status} — ${body}`);
+  }
+  const json: unknown = await res.json();
+  // Stalwart returns HTTP 200 with {"error":"fieldAlreadyExists"} if the domain exists.
+  if (
+    json !== null &&
+    typeof json === "object" &&
+    "error" in json &&
+    (json as { error: unknown }).error !== "fieldAlreadyExists"
+  ) {
+    throw new Error(`Failed to ensure domain exists: ${JSON.stringify(json)}`);
+  }
+}
 
 /**
  * Create a new individual account in Stalwart.
@@ -54,20 +78,21 @@ const DEFAULT_QUOTA_SIZE = 1_073_741_824; // 1 GiB
 export async function createAccount(
   localPart: string,
 ): Promise<{ email: string }> {
+  await ensureDomainExists();
+
   if (await accountExists(localPart)) {
     throw new Error(
       `Account already exists: ${localPart}@${config.domain}`,
     );
   }
 
+  const email = `${localPart}@${config.domain}`;
   const body = JSON.stringify({
     type: "individual",
     name: localPart,
-    description: `${localPart}@${config.domain}`,
-    quota: {
-      messages: DEFAULT_QUOTA_MESSAGES,
-      size: DEFAULT_QUOTA_SIZE,
-    },
+    description: email,
+    emails: [email],
+    quota: DEFAULT_QUOTA_BYTES,
   });
 
   const res = await stalwartFetch("/api/principal", {
@@ -89,6 +114,20 @@ export async function deleteAccount(localPart: string): Promise<void> {
   });
 
   await assertOk(res, `deleteAccount(${localPart})`);
+
+  // Stalwart returns HTTP 200 with {"error":"notFound"} if the account doesn't exist.
+  const json: unknown = await res.json().catch(() => null);
+  if (
+    json !== null &&
+    typeof json === "object" &&
+    "error" in json
+  ) {
+    const err = (json as { error: unknown }).error;
+    if (err === "notFound") {
+      throw new Error(`Account not found: ${localPart}@${config.domain}`);
+    }
+    throw new Error(`Stalwart error deleting account: ${JSON.stringify(json)}`);
+  }
 }
 
 /**
@@ -104,12 +143,14 @@ export async function listAccounts(): Promise<
 
   await assertOk(res, "listAccounts()");
 
-  // Stalwart returns either a plain array or a paginated wrapper object.
-  // Handle both shapes defensively.
+  // Stalwart returns { data: { items: [...], total: N } } for paginated queries.
   const raw: unknown = await res.json();
-  const items: Array<Record<string, unknown>> = Array.isArray(raw)
-    ? (raw as Array<Record<string, unknown>>)
-    : ((raw as { data?: Array<Record<string, unknown>> }).data ?? []);
+  const data = (raw as { data?: unknown }).data;
+  const items: Array<Record<string, unknown>> = Array.isArray(data)
+    ? (data as Array<Record<string, unknown>>)
+    : Array.isArray((data as { items?: unknown } | undefined)?.items)
+    ? ((data as { items: Array<Record<string, unknown>> }).items)
+    : [];
 
   return items.map((item) => ({
     name: String(item["name"] ?? ""),
@@ -123,16 +164,13 @@ export async function listAccounts(): Promise<
 
 /**
  * Return true if an account with the given localPart exists.
+ * Stalwart returns HTTP 200 with {"error":"notFound"} for missing principals.
  */
 export async function accountExists(localPart: string): Promise<boolean> {
   const res = await stalwartFetch(
     `/api/principal/${encodeURIComponent(localPart)}`,
     { method: "GET" },
   );
-
-  if (res.status === 404) {
-    return false;
-  }
 
   if (!res.ok) {
     let body: string;
@@ -144,6 +182,17 @@ export async function accountExists(localPart: string): Promise<boolean> {
     throw new Error(
       `Stalwart API error (accountExists(${localPart})): HTTP ${res.status} — ${body}`,
     );
+  }
+
+  const json: unknown = await res.json();
+  // Stalwart returns HTTP 200 with {"error":"notFound"} when the principal doesn't exist.
+  if (
+    json !== null &&
+    typeof json === "object" &&
+    "error" in json &&
+    (json as { error: unknown }).error === "notFound"
+  ) {
+    return false;
   }
 
   return true;

@@ -5,6 +5,10 @@ export const config = {
     adminUser: process.env.STALWART_ADMIN_USER ?? "admin",
     adminPassword: process.env.STALWART_ADMIN_PASSWORD ?? (() => { throw new Error("STALWART_ADMIN_PASSWORD env var required") })(),
   },
+  sendgrid: {
+    apiKey: process.env.SENDGRID_API_KEY ?? (() => { throw new Error("SENDGRID_API_KEY env var required") })(),
+    verifiedSender: process.env.SENDGRID_VERIFIED_SENDER ?? "noreply@fridaymail.duckdns.org",
+  },
   auth: {
     // Comma-separated list of valid API keys
     apiKeys: new Set((process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean)),
