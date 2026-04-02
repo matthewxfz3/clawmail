@@ -39,12 +39,11 @@ function httpResponse(status: number, body: unknown) {
 
 // Clear module-level caches between tests by making the first fetch call
 // always return a fresh session (impersonation succeeds).
-function setupFreshSession(accountId = "acc-abc", extraCalls: ReturnType<typeof vi.fn>[] = []) {
+function setupFreshSession(accountId = "acc-abc", extraCalls: Array<() => unknown> = []) {
   let callCount = 0;
   global.fetch = vi.fn().mockImplementation(() => {
     callCount++;
     if (callCount === 1) {
-      // /.well-known/jmap impersonation call
       return Promise.resolve(httpResponse(200, impersonateSession(accountId)));
     }
     const next = extraCalls.shift();
