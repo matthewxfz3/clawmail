@@ -922,6 +922,23 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // GET /dashboard/debug/jmap?a=email — raw JMAP diagnostic (auth-gated)
+  if (path === "/dashboard/debug/jmap") {
+    const account = url.searchParams.get("a") ?? "";
+    const result: Record<string, unknown> = { account };
+    try {
+      const client = new JmapClient(account);
+      const mailboxes = await client.listMailboxes();
+      result.mailboxes = mailboxes;
+      result.totalEmails = mailboxes.reduce((s, m) => s + m.totalEmails, 0);
+    } catch (e) {
+      result.error = String(e);
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result, null, 2));
+    return;
+  }
+
   // POST /dashboard/action/send-test-email
   if (path === "/dashboard/action/send-test-email" && req.method === "POST") {
     const body = await readBody(req);

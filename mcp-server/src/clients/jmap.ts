@@ -48,10 +48,34 @@ function basicAuthHeader(): string {
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 }
 
-/** Module-level session cache (shared — we always auth as admin). */
-let cachedSession: JmapSession | undefined;
+/**
+ * Master-user impersonation header.
+ * Format: "targetEmail*adminUser:adminPassword"
+ * This gives back a JMAP session scoped to targetEmail so we can read their
+ * mail directly — no cross-account ACL needed.
+ */
+function impersonateAuthHeader(targetEmail: string): string {
+  const credentials = `${targetEmail}*${config.stalwart.adminUser}:${config.stalwart.adminPassword}`;
+  return `Basic ${Buffer.from(credentials).toString("base64")}`;
+}
 
-/** Cache: email → opaque JMAP account ID. */
+/** Cache TTL: 5 minutes. Cloud Run instances are long-lived so we need expiry. */
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** Module-level admin session cache. */
+let cachedSession: JmapSession | undefined;
+let cachedSessionAt = 0;
+
+/** Per-user context cache: email → { apiUrl, accountId, authHeader, cachedAt } */
+interface UserContext {
+  apiUrl: string;
+  accountId: string;
+  authHeader: string;
+  cachedAt: number;
+}
+const userContextCache = new Map<string, UserContext>();
+
+/** Cache: email → opaque JMAP account ID (admin-resolved fallback). */
 const jmapIdCache = new Map<string, string>();
 
 /** Extract a plain-text address from a JMAP EmailAddress object or string. */
@@ -144,32 +168,76 @@ export class JmapClient {
   constructor(private readonly email: string) {}
 
   // -------------------------------------------------------------------------
-  // Private: session discovery (shared admin session)
+  // Private: resolve per-user JMAP context (impersonation-first)
   // -------------------------------------------------------------------------
 
-  private async getSession(): Promise<JmapSession> {
-    if (cachedSession !== undefined) return cachedSession;
+  /**
+   * Strategy 1 — master-user impersonation:
+   *   Authenticate as "email*admin:adminpass".
+   *   If Stalwart supports it, the session comes back scoped to the target
+   *   user, so primaryAccounts["urn:ietf:params:jmap:mail"] is their own
+   *   account ID and all subsequent requests are fully authorised.
+   *
+   * Strategy 2 — admin auth + Principal/get (fallback):
+   *   Original approach. Works for management ops but Stalwart may refuse
+   *   cross-account Email queries with accountNotFound.
+   */
+  private async getUserContext(): Promise<UserContext> {
+    const cached = userContextCache.get(this.email);
+    if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return cached;
 
     const wellKnownUrl = new URL("/.well-known/jmap", config.stalwart.url).toString();
 
+    // ── Strategy 1: impersonation ────────────────────────────────────────────
+    const impersonateAuth = impersonateAuthHeader(this.email);
+    try {
+      const res = await fetch(wellKnownUrl, {
+        method: "GET",
+        headers: { Authorization: impersonateAuth, Accept: "application/json" },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          apiUrl?: string;
+          primaryAccounts?: Record<string, string>;
+        };
+        const apiUrl = data.apiUrl;
+        const accountId = data.primaryAccounts?.["urn:ietf:params:jmap:mail"];
+        if (apiUrl && accountId) {
+          console.log(`[jmap] strategy=impersonate email=${this.email} accountId=${accountId}`);
+          const ctx: UserContext = { apiUrl, accountId, authHeader: impersonateAuth, cachedAt: Date.now() };
+          userContextCache.set(this.email, ctx);
+          return ctx;
+        }
+        console.warn(`[jmap] impersonate ok but missing apiUrl/accountId for ${this.email}, falling back`);
+      }
+    } catch (err) {
+      console.warn(`[jmap] impersonate failed for ${this.email}:`, err);
+    }
+
+    // ── Strategy 2: admin session + Principal/get ────────────────────────────
+    console.log(`[jmap] strategy=admin-principal email=${this.email}`);
+    const adminSession = await this.getAdminSession();
+    const accountId = await this.resolveAccountIdViaAdmin(adminSession);
+    const ctx: UserContext = { apiUrl: adminSession.apiUrl, accountId, authHeader: basicAuthHeader(), cachedAt: Date.now() };
+    userContextCache.set(this.email, ctx);
+    return ctx;
+  }
+
+  // ── Admin session (shared, cached) ────────────────────────────────────────
+
+  private async getAdminSession(): Promise<JmapSession> {
+    if (cachedSession !== undefined && Date.now() - cachedSessionAt < CACHE_TTL_MS) return cachedSession;
+
+    const wellKnownUrl = new URL("/.well-known/jmap", config.stalwart.url).toString();
     const res = await fetch(wellKnownUrl, {
       method: "GET",
-      headers: {
-        Authorization: basicAuthHeader(),
-        Accept: "application/json",
-      },
+      headers: { Authorization: basicAuthHeader(), Accept: "application/json" },
     });
 
     if (!res.ok) {
-      let body: string;
-      try {
-        body = await res.text();
-      } catch {
-        body = "<unreadable body>";
-      }
-      throw new Error(
-        `JMAP session discovery failed: HTTP ${res.status} — ${body}`,
-      );
+      const body = await res.text().catch(() => "<unreadable body>");
+      throw new Error(`JMAP admin session discovery failed: HTTP ${res.status} — ${body}`);
     }
 
     const data = (await res.json()) as {
@@ -177,29 +245,17 @@ export class JmapClient {
       primaryAccounts?: Record<string, string>;
     };
 
-    if (!data.apiUrl) {
-      throw new Error("JMAP session response missing apiUrl");
-    }
+    if (!data.apiUrl) throw new Error("JMAP session response missing apiUrl");
 
-    cachedSession = {
-      apiUrl: data.apiUrl,
-      primaryAccounts: data.primaryAccounts ?? {},
-    };
-
+    cachedSession = { apiUrl: data.apiUrl, primaryAccounts: data.primaryAccounts ?? {} };
+    cachedSessionAt = Date.now();
     return cachedSession;
   }
 
-  // -------------------------------------------------------------------------
-  // Private: resolve email → opaque JMAP account ID via Principals API
-  // -------------------------------------------------------------------------
-
-  private async resolveAccountId(): Promise<string> {
+  private async resolveAccountIdViaAdmin(session: JmapSession): Promise<string> {
     const cached = jmapIdCache.get(this.email);
     if (cached !== undefined) return cached;
 
-    const session = await this.getSession();
-
-    // The admin's primary account ID handles the Principals capability.
     const principalsAccountId =
       session.primaryAccounts["urn:ietf:params:jmap:principals"] ??
       session.primaryAccounts["urn:ietf:params:jmap:mail"];
@@ -217,21 +273,15 @@ export class JmapClient {
       },
       body: JSON.stringify({
         using: ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:principals"],
-        methodCalls: [
-          ["Principal/get", { accountId: principalsAccountId, ids: null }, "pget"],
-        ],
+        methodCalls: [["Principal/get", { accountId: principalsAccountId, ids: null }, "pget"]],
       }),
     });
 
-    if (!res.ok) {
-      throw new Error(`Principal/get failed: HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`Principal/get failed: HTTP ${res.status}`);
 
     const data = (await res.json()) as { methodResponses?: Array<[string, Record<string, unknown>, string]> };
     const pResponse = (data.methodResponses ?? []).find(([, , id]) => id === "pget");
-    if (!pResponse) {
-      throw new Error("No Principal/get response from JMAP");
-    }
+    if (!pResponse) throw new Error("No Principal/get response from JMAP");
 
     const list = (pResponse[1] as { list?: Array<Record<string, unknown>> }).list ?? [];
     const principal = list.find(
@@ -252,20 +302,17 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   private async request(calls: JmapMethodCall[]): Promise<JmapMethodResponse[]> {
-    const session = await this.getSession();
+    const ctx = await this.getUserContext();
 
     const body = JSON.stringify({
-      using: [
-        "urn:ietf:params:jmap:core",
-        "urn:ietf:params:jmap:mail",
-      ],
+      using: ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
       methodCalls: calls,
     });
 
-    const res = await fetch(session.apiUrl, {
+    const res = await fetch(ctx.apiUrl, {
       method: "POST",
       headers: {
-        Authorization: basicAuthHeader(),
+        Authorization: ctx.authHeader,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
@@ -273,15 +320,8 @@ export class JmapClient {
     });
 
     if (!res.ok) {
-      let errBody: string;
-      try {
-        errBody = await res.text();
-      } catch {
-        errBody = "<unreadable body>";
-      }
-      throw new Error(
-        `JMAP request failed: HTTP ${res.status} — ${errBody}`,
-      );
+      const errBody = await res.text().catch(() => "<unreadable body>");
+      throw new Error(`JMAP request failed: HTTP ${res.status} — ${errBody}`);
     }
 
     const data = (await res.json()) as {
@@ -291,12 +331,17 @@ export class JmapClient {
     return data.methodResponses ?? [];
   }
 
+  /** Convenience: return just the accountId from the user context. */
+  private async getAccountId(): Promise<string> {
+    return (await this.getUserContext()).accountId;
+  }
+
   // -------------------------------------------------------------------------
   // Private: mailbox lookup
   // -------------------------------------------------------------------------
 
   private async getMailboxId(name: string): Promise<string | null> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const responses = await this.request([
       [
         "Mailbox/query",
@@ -320,7 +365,7 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async listMailboxes(): Promise<Array<{ id: string; name: string; role: string; totalEmails: number; unreadEmails: number }>> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const responses = await this.request([
       [
         "Mailbox/get",
@@ -351,7 +396,7 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async countEmails(folder = "Inbox"): Promise<number> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const mailboxId = await this.getMailboxId(folder);
 
     const queryFilter: Record<string, unknown> = {};
@@ -386,7 +431,7 @@ export class JmapClient {
     folder = "Inbox",
     limit = 50,
   ): Promise<EmailSummary[]> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const mailboxId = await this.getMailboxId(folder);
 
     const queryFilter: Record<string, unknown> = {};
@@ -441,7 +486,7 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async getEmail(emailId: string): Promise<EmailDetail> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const responses = await this.request([
       [
         "Email/get",
@@ -486,7 +531,7 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async deleteEmail(emailId: string): Promise<void> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const trashId = await this.getMailboxId("Trash");
     if (trashId === null) {
       throw new Error('Could not locate "Trash" mailbox for account: ' + this.email);
@@ -527,7 +572,7 @@ export class JmapClient {
   // -------------------------------------------------------------------------
 
   async searchEmails(query: string): Promise<EmailSummary[]> {
-    const accountId = await this.resolveAccountId();
+    const accountId = await this.getAccountId();
     const responses = await this.request([
       [
         "Email/query",
