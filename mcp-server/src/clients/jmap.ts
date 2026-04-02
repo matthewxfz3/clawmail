@@ -619,6 +619,61 @@ export class JmapClient {
     const list = (getResponse[1] as { list?: Record<string, unknown>[] }).list ?? [];
     return list.map(rawToSummary);
   }
+
+  // -------------------------------------------------------------------------
+  // Public: save a sent message copy to the Sent folder
+  // -------------------------------------------------------------------------
+
+  async saveToSent(params: {
+    from: string;
+    to: string[];
+    cc?: string[];
+    subject: string;
+    body: string;
+    sentAt: string;
+  }): Promise<void> {
+    const accountId = await this.getAccountId();
+    const sentId = await this.getMailboxId("Sent");
+    if (sentId === null) {
+      // Sent folder doesn't exist — skip silently rather than failing the send
+      console.warn(`[jmap] saveToSent: no Sent mailbox found for ${this.email}`);
+      return;
+    }
+
+    const toAddresses = params.to.map((e) => ({ email: e }));
+    const ccAddresses = (params.cc ?? []).map((e) => ({ email: e }));
+
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          create: {
+            sent1: {
+              mailboxIds: { [sentId]: true },
+              keywords: { "$seen": true },
+              from: [{ email: params.from }],
+              to: toAddresses,
+              ...(ccAddresses.length > 0 ? { cc: ccAddresses } : {}),
+              subject: params.subject,
+              sentAt: params.sentAt,
+              bodyValues: { body: { value: params.body, isEncodingProblem: false, isTruncated: false } },
+              textBody: [{ partId: "body", type: "text/plain" }],
+            },
+          },
+        },
+        "sv1",
+      ],
+    ]);
+
+    const response = responses.find(([, , id]) => id === "sv1");
+    if (!response) return;
+
+    const notCreated = (response[1] as { notCreated?: Record<string, unknown> }).notCreated;
+    if (notCreated?.["sent1"]) {
+      console.warn(`[jmap] saveToSent failed for ${this.email}:`, JSON.stringify(notCreated["sent1"]));
+    }
+  }
 }
 
 /** Reset all module-level caches. For use in tests only. */
