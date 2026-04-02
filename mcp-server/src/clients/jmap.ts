@@ -284,9 +284,14 @@ export class JmapClient {
     if (!pResponse) throw new Error("No Principal/get response from JMAP");
 
     const list = (pResponse[1] as { list?: Array<Record<string, unknown>> }).list ?? [];
-    const principal = list.find(
-      (p) => typeof p["email"] === "string" && p["email"].toLowerCase() === this.email.toLowerCase(),
-    );
+
+    // Primary match: exact email comparison.
+    // Fallback: match by local part only — handles accounts whose stored email still
+    // has an old domain (e.g. after a domain migration like duckdns → fridaymailer.com).
+    const localPart = this.email.split("@")[0].toLowerCase();
+    const principal =
+      list.find((p) => typeof p["email"] === "string" && p["email"].toLowerCase() === this.email.toLowerCase()) ??
+      list.find((p) => typeof p["name"] === "string" && p["name"].toLowerCase() === localPart);
 
     if (!principal || typeof principal["id"] !== "string") {
       throw new Error(`No JMAP principal found for email: ${this.email}`);
