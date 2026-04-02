@@ -79,7 +79,11 @@ const CSS = `
   .status-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:.9rem}
   .status-row:last-child{border-bottom:none}
   .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-  .dot.ok{background:#22c55e}.dot.warn{background:#f59e0b}.dot.fail{background:#ef4444}
+  .dot.ok{background:#22c55e}.dot.warn{background:#f59e0b}.dot.fail{background:#ef4444}.dot.info{background:#94a3b8}
+  .status-group{margin-bottom:8px}
+  .status-group:last-child{margin-bottom:0}
+  .group-heading{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#888;padding:10px 0 4px 0;border-bottom:1px solid #f0f0f0;margin-bottom:2px}
+  .row-detail{display:block;font-size:.75rem;color:#999;margin-top:1px;font-weight:400}
   .label{flex:1;color:#444}
   .badge{font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:12px;color:#fff}
   .badge.ok{background:#22c55e}.badge.warn{background:#f59e0b}.badge.fail{background:#ef4444}
@@ -141,49 +145,162 @@ function escHtml(s: string): string {
 
 interface StatusItem {
   label: string;
-  status: "ok" | "warn" | "fail";
+  status: "ok" | "warn" | "fail" | "info";
   detail?: string;
 }
 
-async function checkStalwartHealth(): Promise<StatusItem> {
-  try {
-    // Stalwart has no /api/health endpoint — use /api/principal as a liveness probe
-    const url = new URL("/api/principal", config.stalwart.url).toString();
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(4000),
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${config.stalwart.adminUser}:${config.stalwart.adminPassword}`).toString("base64")}`,
-      },
-    });
-    if (res.ok) {
-      return { label: "Stalwart Mail Server", status: "ok", detail: config.stalwart.url };
-    }
-    const body = await res.text().catch(() => "");
-    return { label: "Stalwart Mail Server", status: "warn", detail: `HTTP ${res.status} — ${body.slice(0, 80)}` };
-  } catch (e) {
-    return { label: "Stalwart Mail Server", status: "fail", detail: String(e) };
-  }
+interface StatusGroup {
+  heading: string;
+  items: StatusItem[];
 }
 
-async function checkMxRecord(): Promise<StatusItem> {
+const authHeader = () =>
+  `Basic ${Buffer.from(`${config.stalwart.adminUser}:${config.stalwart.adminPassword}`).toString("base64")}`;
+
+async function checkStalwartGroup(accountCount: number): Promise<StatusGroup> {
+  const items: StatusItem[] = [];
+
+  // Management API
   try {
-    const { Resolver } = await import("node:dns/promises");
-    const resolver = new Resolver();
+    const res = await fetch(new URL("/api/principal", config.stalwart.url).toString(), {
+      signal: AbortSignal.timeout(4000),
+      headers: { Authorization: authHeader() },
+    });
+    if (res.ok) {
+      items.push({ label: "Management API", status: "ok", detail: config.stalwart.url });
+    } else {
+      const body = await res.text().catch(() => "");
+      items.push({ label: "Management API", status: "warn", detail: `HTTP ${res.status} — ${body.slice(0, 120)}` });
+    }
+  } catch (e) {
+    items.push({ label: "Management API", status: "fail", detail: String(e) });
+  }
+
+  // JMAP session
+  try {
+    const res = await fetch(new URL("/.well-known/jmap", config.stalwart.url).toString(), {
+      signal: AbortSignal.timeout(4000),
+      headers: { Authorization: authHeader(), Accept: "application/json" },
+    });
+    if (res.ok) {
+      const data = await res.json() as { apiUrl?: string };
+      items.push({ label: "JMAP session", status: "ok", detail: data.apiUrl ?? "ok" });
+    } else {
+      items.push({ label: "JMAP session", status: "warn", detail: `HTTP ${res.status}` });
+    }
+  } catch (e) {
+    items.push({ label: "JMAP session", status: "fail", detail: String(e) });
+  }
+
+  items.push({ label: "Active accounts", status: "info", detail: String(accountCount) });
+
+  return { heading: "Stalwart Mail Server", items };
+}
+
+async function checkDnsGroup(): Promise<StatusGroup> {
+  const { Resolver } = await import("node:dns/promises");
+  const resolver = new Resolver();
+  const items: StatusItem[] = [];
+
+  // MX
+  try {
     const mx = await resolver.resolveMx(config.domain);
     if (mx.length > 0) {
       const top = mx.sort((a, b) => a.priority - b.priority)[0];
-      return { label: `MX record (${config.domain})`, status: "ok", detail: `${top.priority} ${top.exchange}` };
+      items.push({ label: "MX record", status: "ok", detail: `${top.priority} ${top.exchange}` });
+    } else {
+      items.push({ label: "MX record", status: "warn", detail: "No records found — inbound mail will not be delivered" });
     }
-    return { label: `MX record (${config.domain})`, status: "warn", detail: "No MX records found" };
-  } catch {
-    return { label: `MX record (${config.domain})`, status: "warn", detail: "DNS lookup failed" };
+  } catch (e) {
+    items.push({ label: "MX record", status: "fail", detail: `Lookup failed: ${String(e)}` });
   }
+
+  // SPF
+  try {
+    const txt = await resolver.resolveTxt(config.domain);
+    const spf = txt.flat().find(r => r.startsWith("v=spf1"));
+    if (spf) {
+      items.push({ label: "SPF record", status: "ok", detail: spf.slice(0, 80) });
+    } else {
+      items.push({ label: "SPF record", status: "warn", detail: "Not found — outbound mail may be marked as spam" });
+    }
+  } catch {
+    items.push({ label: "SPF record", status: "warn", detail: "Lookup failed" });
+  }
+
+  // DMARC
+  try {
+    const txt = await resolver.resolveTxt(`_dmarc.${config.domain}`);
+    const dmarc = txt.flat().find(r => r.startsWith("v=DMARC1"));
+    if (dmarc) {
+      items.push({ label: "DMARC record", status: "ok", detail: dmarc.slice(0, 80) });
+    } else {
+      items.push({ label: "DMARC record", status: "warn", detail: "Not found — no DMARC policy set" });
+    }
+  } catch {
+    items.push({ label: "DMARC record", status: "warn", detail: "Not found — no DMARC policy set" });
+  }
+
+  return { heading: `DNS — ${config.domain}`, items };
 }
 
-function statusRow(item: StatusItem): string {
-  const badge = `<span class="badge ${item.status}">${item.status.toUpperCase()}</span>`;
-  const detail = item.detail ? `<span style="font-size:.78rem;color:#999;margin-left:4px">${escHtml(item.detail)}</span>` : "";
-  return `<div class="status-row"><div class="dot ${item.status}"></div><span class="label">${escHtml(item.label)}${detail}</span>${badge}</div>`;
+function checkMcpServerGroup(): StatusGroup {
+  const uptimeSec = Math.floor(process.uptime());
+  const h = Math.floor(uptimeSec / 3600);
+  const m = Math.floor((uptimeSec % 3600) / 60);
+  const s = uptimeSec % 60;
+  const uptimeStr = h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+
+  const mem = process.memoryUsage();
+  const rss = `${Math.round(mem.rss / 1024 / 1024)} MB RSS / ${Math.round(mem.heapUsed / 1024 / 1024)} MB heap`;
+
+  return {
+    heading: "MCP Server (this process)",
+    items: [
+      { label: "Status", status: "ok", detail: "Running" },
+      { label: "Node.js", status: "info", detail: process.version },
+      { label: "Uptime", status: "info", detail: uptimeStr },
+      { label: "Memory", status: "info", detail: rss },
+      { label: "API keys configured", status: config.auth.apiKeys.size > 0 ? "ok" : "warn", detail: config.auth.apiKeys.size > 0 ? `${config.auth.apiKeys.size} key(s)` : "No API keys — server is open" },
+    ],
+  };
+}
+
+function checkSendgridGroup(): StatusGroup {
+  const hasKey = !!config.sendgrid.apiKey && config.sendgrid.apiKey !== "SG.your-sendgrid-api-key";
+  const masked = config.sendgrid.apiKey.length > 10
+    ? config.sendgrid.apiKey.slice(0, 6) + "••••••" + config.sendgrid.apiKey.slice(-4)
+    : "not set";
+  return {
+    heading: "SendGrid Relay",
+    items: [
+      { label: "API key", status: hasKey ? "ok" : "fail", detail: hasKey ? masked : "SENDGRID_API_KEY not set" },
+      { label: "Verified sender (FROM)", status: "info", detail: config.sendgrid.verifiedSender },
+      { label: "SMTP host", status: "info", detail: "smtp.sendgrid.net:587" },
+    ],
+  };
+}
+
+function statusRow(item: StatusItem, indent = false): string {
+  const dotClass = item.status === "info" ? "info" : item.status;
+  const badgeHtml = item.status !== "info"
+    ? `<span class="badge ${item.status}">${item.status.toUpperCase()}</span>`
+    : `<span style="font-size:.75rem;color:#888">${escHtml(item.detail ?? "")}</span>`;
+  const labelDetail = item.status !== "info" && item.detail
+    ? `<span class="row-detail">${escHtml(item.detail)}</span>`
+    : "";
+  const indentStyle = indent ? "padding-left:20px" : "";
+  return `<div class="status-row" style="${indentStyle}"><div class="dot ${dotClass}"></div><span class="label">${escHtml(item.label)}${labelDetail}</span>${badgeHtml}</div>`;
+}
+
+function statusGroup(group: StatusGroup): string {
+  const rows = group.items.map(item => statusRow(item, true)).join("");
+  return `
+    <div class="status-group">
+      <div class="group-heading">${escHtml(group.heading)}</div>
+      ${rows}
+    </div>
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,22 +308,15 @@ function statusRow(item: StatusItem): string {
 // ---------------------------------------------------------------------------
 
 async function buildDashboard(serviceUrl: string): Promise<string> {
-  const [stalwartStatus, mxStatus, accountsResult] = await Promise.allSettled([
-    checkStalwartHealth(),
-    checkMxRecord(),
-    toolListAccounts(),
+  const accountsResult = await toolListAccounts().catch(() => ({ accounts: [] as Array<{ email: string; name: string }>, count: 0 }));
+  const accounts = accountsResult.accounts;
+
+  const [stalwartGroup, dnsGroup] = await Promise.all([
+    checkStalwartGroup(accounts.length),
+    checkDnsGroup(),
   ]);
-
-  const stalwart = stalwartStatus.status === "fulfilled"
-    ? stalwartStatus.value
-    : { label: "Stalwart Mail Server", status: "fail" as const, detail: "Error" };
-  const mx = mxStatus.status === "fulfilled"
-    ? mxStatus.value
-    : { label: `MX record (${config.domain})`, status: "fail" as const, detail: "Error" };
-
-  const accounts: Array<{ email: string; name: string }> = accountsResult.status === "fulfilled"
-    ? accountsResult.value.accounts
-    : [];
+  const mcpGroup = checkMcpServerGroup();
+  const sendgridGroup = checkSendgridGroup();
 
   const mcpUrl = `${serviceUrl}/mcp`;
   const firstKey = [...config.auth.apiKeys][0] ?? "(no API key configured)";
@@ -255,10 +365,10 @@ async function buildDashboard(serviceUrl: string): Promise<string> {
 
       <div class="card">
         <h2>System status</h2>
-        ${statusRow({ label: "MCP Server (this service)", status: "ok", detail: serviceUrl })}
-        ${statusRow(stalwart)}
-        ${statusRow(mx)}
-        ${statusRow({ label: "Domain", status: "ok", detail: config.domain })}
+        ${statusGroup(mcpGroup)}
+        ${statusGroup(stalwartGroup)}
+        ${statusGroup(dnsGroup)}
+        ${statusGroup(sendgridGroup)}
       </div>
 
       <div class="card">
