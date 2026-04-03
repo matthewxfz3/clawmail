@@ -15,6 +15,21 @@ import {
   toolSearchEmails,
 } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
+import {
+  toolCreateEvent,
+  toolListEvents,
+  toolGetEvent,
+  toolUpdateEvent,
+  toolDeleteEvent,
+  toolCheckAvailability,
+} from "./tools/calendar.js";
+import { toolMarkAsSpam, toolMarkAsNotSpam } from "./tools/spam.js";
+import {
+  toolCreateRule,
+  toolListRules,
+  toolDeleteRule,
+  toolApplyRules,
+} from "./tools/rules.js";
 import { handleDashboard } from "./dashboard.js";
 import { recordCall, recordError, recordRateLimit, recordAccountCreated, recordAccountSend } from "./metrics.js";
 
@@ -282,6 +297,309 @@ function createMcpServer(apiKey: string): McpServer {
         return okContent(result);
       } catch (err) {
         recordError("send_email");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Calendar tools ──────────────────────────────────────────────────────────
+
+  // Tool 9: create_event
+  server.tool(
+    "create_event",
+    "Create a calendar event for an agent account",
+    {
+      account: z.string().describe("The full email address of the account"),
+      title: z.string().describe("Event title"),
+      start: z.string().describe("Start date-time in ISO 8601 format (e.g. 2026-04-10T14:00:00Z)"),
+      end: z.string().describe("End date-time in ISO 8601 format — must be after start"),
+      description: z.string().optional().describe("Optional event description"),
+      attendees: z.array(z.string()).optional().describe("Optional list of attendee email addresses"),
+    },
+    async (args) => {
+      recordCall("create_event");
+      if (!checkRateLimit("create_event", apiKey, 60, 60 * 60 * 1000)) {
+        recordRateLimit("create_event");
+        return rateLimitErr("create_event");
+      }
+      try {
+        return okContent(await toolCreateEvent(args));
+      } catch (err) {
+        recordError("create_event");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 10: list_events
+  server.tool(
+    "list_events",
+    "List calendar events for an agent account, optionally filtered by date range",
+    {
+      account: z.string().describe("The full email address of the account"),
+      from_date: z.string().optional().describe("Only return events ending after this ISO 8601 date-time"),
+      to_date: z.string().optional().describe("Only return events starting before this ISO 8601 date-time"),
+    },
+    async (args) => {
+      recordCall("list_events");
+      if (!checkRateLimit("list_events", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_events");
+        return rateLimitErr("list_events");
+      }
+      try {
+        return okContent(await toolListEvents(args));
+      } catch (err) {
+        recordError("list_events");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 11: get_event
+  server.tool(
+    "get_event",
+    "Get a single calendar event by ID",
+    {
+      account: z.string().describe("The full email address of the account"),
+      event_id: z.string().describe("The event ID returned by create_event"),
+    },
+    async (args) => {
+      recordCall("get_event");
+      if (!checkRateLimit("get_event", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("get_event");
+        return rateLimitErr("get_event");
+      }
+      try {
+        return okContent(await toolGetEvent(args));
+      } catch (err) {
+        recordError("get_event");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 12: update_event
+  server.tool(
+    "update_event",
+    "Update fields of an existing calendar event",
+    {
+      account: z.string().describe("The full email address of the account"),
+      event_id: z.string().describe("The event ID to update"),
+      title: z.string().optional(),
+      start: z.string().optional().describe("New start date-time in ISO 8601"),
+      end: z.string().optional().describe("New end date-time in ISO 8601"),
+      description: z.string().optional(),
+      attendees: z.array(z.string()).optional(),
+    },
+    async (args) => {
+      recordCall("update_event");
+      if (!checkRateLimit("update_event", apiKey, 60, 60 * 60 * 1000)) {
+        recordRateLimit("update_event");
+        return rateLimitErr("update_event");
+      }
+      try {
+        return okContent(await toolUpdateEvent(args));
+      } catch (err) {
+        recordError("update_event");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 13: delete_event
+  server.tool(
+    "delete_event",
+    "Delete a calendar event by ID",
+    {
+      account: z.string().describe("The full email address of the account"),
+      event_id: z.string().describe("The event ID to delete"),
+    },
+    async (args) => {
+      recordCall("delete_event");
+      if (!checkRateLimit("delete_event", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("delete_event");
+        return rateLimitErr("delete_event");
+      }
+      try {
+        return okContent(await toolDeleteEvent(args));
+      } catch (err) {
+        recordError("delete_event");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 14: check_availability
+  server.tool(
+    "check_availability",
+    "Check whether a time window is free of calendar events for an account",
+    {
+      account: z.string().describe("The full email address of the account"),
+      start: z.string().describe("Window start in ISO 8601"),
+      end: z.string().describe("Window end in ISO 8601"),
+    },
+    async (args) => {
+      recordCall("check_availability");
+      if (!checkRateLimit("check_availability", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("check_availability");
+        return rateLimitErr("check_availability");
+      }
+      try {
+        return okContent(await toolCheckAvailability(args));
+      } catch (err) {
+        recordError("check_availability");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Spam tools ───────────────────────────────────────────────────────────────
+
+  // Tool 15: mark_as_spam
+  server.tool(
+    "mark_as_spam",
+    "Move an email to the Junk folder (mark as spam)",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID to mark as spam"),
+    },
+    async (args) => {
+      recordCall("mark_as_spam");
+      if (!checkRateLimit("mark_as_spam", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("mark_as_spam");
+        return rateLimitErr("mark_as_spam");
+      }
+      try {
+        return okContent(await toolMarkAsSpam(args));
+      } catch (err) {
+        recordError("mark_as_spam");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 16: mark_as_not_spam
+  server.tool(
+    "mark_as_not_spam",
+    "Move an email from Junk back to Inbox (mark as not spam)",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID to move back to Inbox"),
+    },
+    async (args) => {
+      recordCall("mark_as_not_spam");
+      if (!checkRateLimit("mark_as_not_spam", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("mark_as_not_spam");
+        return rateLimitErr("mark_as_not_spam");
+      }
+      try {
+        return okContent(await toolMarkAsNotSpam(args));
+      } catch (err) {
+        recordError("mark_as_not_spam");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Mailbox rules tools ──────────────────────────────────────────────────────
+
+  // Tool 17: create_rule
+  server.tool(
+    "create_rule",
+    "Create a mailbox rule that matches emails by condition and applies an action when apply_rules is called",
+    {
+      account: z.string().describe("The full email address of the account"),
+      name: z.string().describe("A descriptive name for this rule"),
+      condition: z.object({
+        from: z.string().optional().describe("Substring match on sender address (case-insensitive)"),
+        subject: z.string().optional().describe("Substring match on subject (case-insensitive)"),
+        hasAttachment: z.boolean().optional().describe("Match emails with (true) or without (false) attachments"),
+        olderThanDays: z.number().int().min(1).optional().describe("Match emails older than N days"),
+      }).describe("At least one condition field is required"),
+      action: z.object({
+        moveTo: z.string().optional().describe("Destination folder name (created if it doesn't exist)"),
+        markRead: z.boolean().optional().describe("Mark matched emails as read"),
+        delete: z.boolean().optional().describe("Move matched emails to Trash"),
+      }).describe("At least one action field is required"),
+    },
+    async (args) => {
+      recordCall("create_rule");
+      if (!checkRateLimit("create_rule", apiKey, 60, 60 * 60 * 1000)) {
+        recordRateLimit("create_rule");
+        return rateLimitErr("create_rule");
+      }
+      try {
+        return okContent(await toolCreateRule(args));
+      } catch (err) {
+        recordError("create_rule");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 18: list_rules
+  server.tool(
+    "list_rules",
+    "List all mailbox rules for an account",
+    {
+      account: z.string().describe("The full email address of the account"),
+    },
+    async (args) => {
+      recordCall("list_rules");
+      if (!checkRateLimit("list_rules", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_rules");
+        return rateLimitErr("list_rules");
+      }
+      try {
+        return okContent(await toolListRules(args));
+      } catch (err) {
+        recordError("list_rules");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 19: delete_rule
+  server.tool(
+    "delete_rule",
+    "Delete a mailbox rule by ID",
+    {
+      account: z.string().describe("The full email address of the account"),
+      rule_id: z.string().describe("The rule ID to delete"),
+    },
+    async (args) => {
+      recordCall("delete_rule");
+      if (!checkRateLimit("delete_rule", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("delete_rule");
+        return rateLimitErr("delete_rule");
+      }
+      try {
+        return okContent(await toolDeleteRule(args));
+      } catch (err) {
+        recordError("delete_rule");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 20: apply_rules
+  server.tool(
+    "apply_rules",
+    "Apply all mailbox rules to emails in a folder. Returns a summary of actions taken.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      folder: z.string().optional().describe("Folder to scan (default: Inbox)"),
+    },
+    async (args) => {
+      recordCall("apply_rules");
+      if (!checkRateLimit("apply_rules", apiKey, 20, 60 * 1000)) {
+        recordRateLimit("apply_rules");
+        return rateLimitErr("apply_rules");
+      }
+      try {
+        return okContent(await toolApplyRules(args));
+      } catch (err) {
+        recordError("apply_rules");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },

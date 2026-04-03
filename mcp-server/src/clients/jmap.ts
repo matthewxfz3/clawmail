@@ -619,6 +619,185 @@ export class JmapClient {
   }
 
   // -------------------------------------------------------------------------
+  // Public: ensure a mailbox exists, create it if not — returns mailbox id
+  // -------------------------------------------------------------------------
+
+  async ensureMailbox(name: string): Promise<string> {
+    const existing = await this.getMailboxId(name);
+    if (existing !== null) return existing;
+
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Mailbox/set",
+        {
+          accountId,
+          create: {
+            mb1: { name, parentId: null },
+          },
+        },
+        "mbc1",
+      ],
+    ]);
+
+    const response = responses.find(([, , id]) => id === "mbc1");
+    const created = (response?.[1] as { created?: Record<string, { id?: string }> })?.created;
+    const newId = created?.["mb1"]?.id;
+    if (!newId) {
+      // May have lost a race — try fetching again
+      const retry = await this.getMailboxId(name);
+      if (retry !== null) return retry;
+      throw new Error(`Failed to create mailbox "${name}" for ${this.email}`);
+    }
+    return newId;
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: move email to a different mailbox folder
+  // -------------------------------------------------------------------------
+
+  async moveEmail(emailId: string, targetFolder: string): Promise<void> {
+    const accountId = await this.getAccountId();
+    const targetId = await this.getMailboxId(targetFolder);
+    if (targetId === null) {
+      throw new Error(`Mailbox not found: "${targetFolder}" for ${this.email}`);
+    }
+
+    // Get current mailboxIds so we can replace them
+    const getResponses = await this.request([
+      ["Email/get", { accountId, ids: [emailId], properties: ["mailboxIds"] }, "eg1"],
+    ]);
+    const getResp = getResponses.find(([, , id]) => id === "eg1");
+    const emailList = (getResp?.[1] as { list?: Array<Record<string, unknown>> })?.list ?? [];
+    if (emailList.length === 0) throw new Error(`Email not found: ${emailId}`);
+
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          update: {
+            [emailId]: { mailboxIds: { [targetId]: true } },
+          },
+        },
+        "mv1",
+      ],
+    ]);
+
+    const resp = responses.find(([, , id]) => id === "mv1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated;
+    if (notUpdated?.[emailId]) {
+      throw new Error(`Failed to move email ${emailId}: ${JSON.stringify(notUpdated[emailId])}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: mark an email as read ($seen keyword)
+  // -------------------------------------------------------------------------
+
+  async markEmailRead(emailId: string): Promise<void> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          update: { [emailId]: { "keywords/$seen": true } },
+        },
+        "mr1",
+      ],
+    ]);
+    const resp = responses.find(([, , id]) => id === "mr1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated;
+    if (notUpdated?.[emailId]) {
+      console.warn(`[jmap] markEmailRead failed for ${emailId}:`, JSON.stringify(notUpdated[emailId]));
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: create a system email in a named mailbox (calendar events, rules)
+  // -------------------------------------------------------------------------
+
+  async createSystemEmail(mailboxName: string, subject: string, body: string): Promise<string> {
+    const accountId = await this.getAccountId();
+    const mailboxId = await this.ensureMailbox(mailboxName);
+    const now = new Date().toISOString();
+
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          create: {
+            sys1: {
+              mailboxIds: { [mailboxId]: true },
+              keywords: { "$seen": true },
+              from: [{ email: this.email }],
+              to: [{ email: this.email }],
+              subject,
+              sentAt: now,
+              bodyValues: { body: { value: body, isEncodingProblem: false, isTruncated: false } },
+              textBody: [{ partId: "body", type: "text/plain" }],
+            },
+          },
+        },
+        "sys1",
+      ],
+    ]);
+
+    const resp = responses.find(([, , id]) => id === "sys1");
+    const created = (resp?.[1] as { created?: Record<string, { id?: string }> })?.created;
+    const emailId = created?.["sys1"]?.id;
+    if (!emailId) {
+      const notCreated = (resp?.[1] as { notCreated?: Record<string, unknown> })?.notCreated;
+      throw new Error(`Failed to create system email in ${mailboxName}: ${JSON.stringify(notCreated?.["sys1"] ?? "unknown error")}`);
+    }
+    return emailId;
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: list system emails from a named mailbox with subject+body
+  // -------------------------------------------------------------------------
+
+  async listSystemEmails(mailboxName: string): Promise<Array<{ id: string; subject: string; body: string }>> {
+    const accountId = await this.getAccountId();
+    const mailboxId = await this.getMailboxId(mailboxName);
+    if (mailboxId === null) return []; // mailbox doesn't exist yet → no items
+
+    const responses = await this.request([
+      [
+        "Email/query",
+        {
+          accountId,
+          filter: { inMailbox: mailboxId },
+          sort: [{ property: "sentAt", isAscending: true }],
+          limit: 500,
+        },
+        "sq1",
+      ],
+      [
+        "Email/get",
+        {
+          accountId,
+          "#ids": { resultOf: "sq1", name: "Email/query", path: "/ids" },
+          properties: ["id", "subject", "textBody"],
+          fetchTextBodyValues: true,
+        },
+        "sg1",
+      ],
+    ]);
+
+    const getResp = responses.find(([, , id]) => id === "sg1");
+    const list = (getResp?.[1] as { list?: Record<string, unknown>[] })?.list ?? [];
+
+    return list.map((item) => {
+      const subject = typeof item["subject"] === "string" ? item["subject"] : "";
+      const body = firstBodyText(item["textBody"]) ?? "";
+      return { id: String(item["id"] ?? ""), subject, body };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // Public: save a sent message copy to the Sent folder
   // -------------------------------------------------------------------------
 
