@@ -3,21 +3,32 @@
  * Works on Cloud Run with no additional dependencies.
  */
 
-const PROJECT = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? "";
 const SM_BASE = "https://secretmanager.googleapis.com/v1";
+const METADATA = "http://metadata.google.internal/computeMetadata/v1";
 
-// Simple in-process token cache — refreshed when it expires
-let _cachedToken = "";
-let _tokenExpiry  = 0;
+// Simple in-process caches
+let _cachedToken   = "";
+let _tokenExpiry   = 0;
+let _cachedProject = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? "";
+
+async function getProject(): Promise<string> {
+  if (_cachedProject) return _cachedProject;
+  const res = await fetch(`${METADATA}/project/project-id`, {
+    headers: { "Metadata-Flavor": "Google" },
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!res.ok) throw new Error("Failed to resolve GCP project ID from metadata service");
+  _cachedProject = await res.text();
+  return _cachedProject;
+}
 
 async function getAccessToken(): Promise<string> {
   if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken;
 
-  // On Cloud Run: use the instance metadata service
-  const res = await fetch(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(3000) },
-  );
+  const res = await fetch(`${METADATA}/instance/service-accounts/default/token`, {
+    headers: { "Metadata-Flavor": "Google" },
+    signal: AbortSignal.timeout(3000),
+  });
   if (!res.ok) throw new Error("Failed to obtain GCP access token from metadata service");
 
   const { access_token, expires_in } = (await res.json()) as { access_token: string; expires_in: number };
@@ -28,11 +39,10 @@ async function getAccessToken(): Promise<string> {
 
 /** Read the latest version of a secret. Returns null if it doesn't exist. */
 export async function readSecret(name: string): Promise<string | null> {
-  if (!PROJECT) return null;
   try {
-    const token = await getAccessToken();
+    const [token, project] = await Promise.all([getAccessToken(), getProject()]);
     const res = await fetch(
-      `${SM_BASE}/projects/${PROJECT}/secrets/${name}/versions/latest:access`,
+      `${SM_BASE}/projects/${project}/secrets/${name}/versions/latest:access`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     if (res.status === 404) return null;
@@ -47,12 +57,11 @@ export async function readSecret(name: string): Promise<string | null> {
 
 /** Create or update a secret with a new version. */
 export async function writeSecret(name: string, value: string): Promise<void> {
-  if (!PROJECT) throw new Error("GOOGLE_CLOUD_PROJECT env var not set");
-  const token = await getAccessToken();
-  const secretPath = `projects/${PROJECT}/secrets/${name}`;
+  const [token, project] = await Promise.all([getAccessToken(), getProject()]);
+  const secretPath = `projects/${project}/secrets/${name}`;
 
   // Try to create the secret (idempotent — ignores ALREADY_EXISTS)
-  const createRes = await fetch(`${SM_BASE}/projects/${PROJECT}/secrets`, {
+  const createRes = await fetch(`${SM_BASE}/projects/${project}/secrets`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ name: secretPath, replication: { automatic: {} } }),
