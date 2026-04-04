@@ -60,15 +60,14 @@ export async function writeSecret(name: string, value: string): Promise<void> {
   const [token, project] = await Promise.all([getAccessToken(), getProject()]);
   const secretPath = `projects/${project}/secrets/${name}`;
 
-  // Try to create the secret (idempotent — ignores ALREADY_EXISTS)
-  const createRes = await fetch(`${SM_BASE}/projects/${project}/secrets`, {
+  // Try to create the secret — secretId goes as query param, not in body
+  const createRes = await fetch(`${SM_BASE}/projects/${project}/secrets?secretId=${encodeURIComponent(name)}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name: secretPath, replication: { automatic: {} } }),
+    body: JSON.stringify({ replication: { automatic: {} } }),
   });
   if (!createRes.ok && createRes.status !== 409) {
     const text = await createRes.text().catch(() => "");
-    // 409 = ALREADY_EXISTS, that's fine
     if (!text.includes("ALREADY_EXISTS") && !text.includes("already exists")) {
       throw new Error(`Failed to create secret "${name}": ${text}`);
     }
