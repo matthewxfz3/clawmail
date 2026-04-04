@@ -2,6 +2,7 @@ import nodemailer from "nodemailer";
 import { config } from "../config.js";
 import { JmapClient } from "../clients/jmap.js";
 import { randomUUID } from "node:crypto";
+import { createDailyRoom, isDailyConfigured } from "../clients/daily.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -233,11 +234,16 @@ export interface SendEventInviteParams {
   location?: string;
   /** Stable UID for this event — reuse the same UID when sending updates */
   uid?: string;
+  /**
+   * Explicit video URL to embed in the invite.
+   * If omitted and DAILY_API_KEY is configured, a Daily.co room is auto-created.
+   */
+  video_url?: string;
 }
 
 export async function toolSendEventInvite(
   params: SendEventInviteParams,
-): Promise<{ message: string; queued_at: string; uid: string }> {
+): Promise<{ message: string; queued_at: string; uid: string; video_url: string | null }> {
   const { fromAccount, to, title, start, end, description, location } = params;
 
   // Resolve + validate from
@@ -271,6 +277,13 @@ export async function toolSendEventInvite(
   const uid = params.uid ?? `${randomUUID()}@${config.domain}`;
   const queuedAt = new Date().toISOString();
 
+  // Resolve video URL — explicit > Daily.co auto-create > none
+  let resolvedLocation = params.location;
+  if (!resolvedLocation && isDailyConfigured()) {
+    const roomName = `clawmail-${uid.split("@")[0].slice(0, 24)}`;
+    resolvedLocation = await createDailyRoom({ name: roomName, expiresAt: end });
+  }
+
   // Build iCalendar payload
   const icsContent = buildIcs({
     uid,
@@ -280,7 +293,7 @@ export async function toolSendEventInvite(
     start,
     end,
     description,
-    location,
+    location: resolvedLocation,
     createdAt: queuedAt,
   });
 
@@ -288,7 +301,7 @@ export async function toolSendEventInvite(
   const textBody = [
     `You are invited to: ${title}`,
     `When: ${new Date(start).toUTCString()} – ${new Date(end).toUTCString()}`,
-    location ? `Where: ${location}` : "",
+    resolvedLocation ? `Video call: ${resolvedLocation}` : "",
     description ? `\n${description}` : "",
     "",
     "This invitation is attached as a calendar file (.ics).",
@@ -324,5 +337,6 @@ export async function toolSendEventInvite(
     message: `Calendar invite "${title}" sent from ${fromEmail} to ${toList.join(", ")}`,
     queued_at: queuedAt,
     uid,
+    video_url: resolvedLocation ?? null,
   };
 }

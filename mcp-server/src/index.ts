@@ -608,7 +608,7 @@ function createMcpServer(apiKey: string): McpServer {
   // Tool 21: send_event_invite
   server.tool(
     "send_event_invite",
-    "Send a calendar invitation email that auto-appears in Google Calendar, Outlook, Apple Calendar, and any RFC 5545-compatible app",
+    "Send a calendar invitation email that auto-appears in Google Calendar, Outlook, Apple Calendar, and any RFC 5545-compatible app. If DAILY_API_KEY is configured, a video room is auto-created and embedded in the invite.",
     {
       from_account: z.string().describe("The local part or full email address to send from"),
       to: z.union([z.string(), z.array(z.string())]).describe("Recipient email address(es) — they become attendees"),
@@ -618,6 +618,7 @@ function createMcpServer(apiKey: string): McpServer {
       description: z.string().optional().describe("Optional event description shown in the invite"),
       location: z.string().optional().describe("Optional location or video call URL"),
       uid: z.string().optional().describe("Stable event UID — reuse the same UID to send an update for an existing invite"),
+      video_url: z.string().optional().describe("Explicit video call URL to embed (overrides Daily.co auto-creation)"),
     },
     async (args) => {
       recordCall("send_event_invite");
@@ -635,6 +636,7 @@ function createMcpServer(apiKey: string): McpServer {
           description: args.description,
           location: args.location,
           uid: args.uid,
+          video_url: args.video_url,
         });
         const fromEmail = args.from_account.includes("@")
           ? args.from_account

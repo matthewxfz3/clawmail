@@ -13,6 +13,10 @@ export const config = {
     // Comma-separated list of valid API keys
     apiKeys: new Set((process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean)),
   },
+  daily: {
+    // Optional — if set, send_event_invite auto-creates a Daily.co video room
+    apiKey: process.env.DAILY_API_KEY ?? "",
+  },
   dashboard: {
     user: process.env.DASHBOARD_USER ?? "admin",
     password: process.env.DASHBOARD_PASSWORD ?? "",
