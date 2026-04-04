@@ -8,7 +8,8 @@ import { toolListEvents, type CalendarEvent } from "./tools/calendar.js";
 import { toolListRules, type RuleCondition, type RuleAction, type MailboxRule } from "./tools/rules.js";
 import { JmapClient } from "./clients/jmap.js";
 import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
-import { buildAuthUrl, exchangeCode } from "./clients/google-meet.js";
+import { buildAuthUrl, exchangeCode, isMeetConfigured } from "./clients/google-meet.js";
+import { readSecret, writeSecret } from "./clients/secret-manager.js";
 
 // ---------------------------------------------------------------------------
 // Session cookie — HMAC-SHA256 signed, 7-day expiry
@@ -1140,10 +1141,20 @@ function decodeOAuthState(state: string): { clientId: string; clientSecret: stri
   } catch { return null; }
 }
 
-function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | "err"; msg: string }): string {
-  const dailyConfigured  = config.daily.apiKey.length > 0;
-  const meetConfigured   = config.googleMeet.refreshToken.length > 0;
-  const meetCredsStored  = config.googleMeet.clientId.length > 0 && config.googleMeet.clientSecret.length > 0;
+async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | "err"; msg: string }): Promise<string> {
+  // Read live state from Secret Manager (falls back to env vars)
+  const [smClientId, smClientSecret, smRefreshToken, smDailyKey] = await Promise.all([
+    readSecret("google-meet-client-id"),
+    readSecret("google-meet-client-secret"),
+    readSecret("google-meet-refresh-token"),
+    readSecret("daily-api-key"),
+  ]);
+
+  const dailyConfigured  = (config.daily.apiKey || smDailyKey || "").length > 0;
+  const meetConfigured   = (config.googleMeet.refreshToken || smRefreshToken || "").length > 0;
+  const meetCredsStored  = (config.googleMeet.clientId || smClientId || "").length > 0
+                        && (config.googleMeet.clientSecret || smClientSecret || "").length > 0;
+  const storedClientId   = config.googleMeet.clientId || smClientId || "";
 
   const flashHtml = flash
     ? `<div style="margin-bottom:20px;padding:12px 16px;border-radius:8px;font-size:.88rem;font-weight:500;${flash.type === "ok" ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}">${flash.type === "ok" ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`
@@ -1173,16 +1184,19 @@ function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | "err";
           <span class="pill green" style="font-size:.75rem">Active</span>
         </div>` : ""}
       <div style="background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px">
-        <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:12px">${dailyConfigured ? "Update API key" : "Setup (free tier available at daily.co)"}</div>
-        <ol style="font-size:.83rem;color:#555;padding-left:18px;line-height:2">
+        <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:10px">${dailyConfigured ? "Update API key" : "Setup (free tier available at daily.co)"}</div>
+        <ol style="font-size:.83rem;color:#555;padding-left:18px;line-height:2;margin-bottom:14px">
           <li>Sign up at <strong>daily.co</strong> → Settings → Developers → API keys → Create key</li>
-          <li>Run the commands below to store it:</li>
+          <li>Paste it below — saved automatically, no commands needed</li>
         </ol>
-        <div class="code-block" style="margin-top:12px;font-size:.78rem">echo -n "YOUR_DAILY_API_KEY" | gcloud secrets ${dailyConfigured ? "versions add" : "create daily-api-key --data-file"} - --project=${escHtml(process.env.GOOGLE_CLOUD_PROJECT ?? "YOUR_PROJECT")}
-<br>
-gcloud run services update clawmail-mcp \\
-&nbsp; --region us-west1 \\
-&nbsp; --update-secrets=DAILY_API_KEY=daily-api-key:latest</div>
+        <form method="POST" action="/dashboard/integrations/daily/save" style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1">
+            <label style="font-size:.78rem;font-weight:600;color:#555;display:block;margin-bottom:4px">Daily.co API Key</label>
+            <input type="password" name="api_key" placeholder="••••••••••••••••••••" autocomplete="off"
+              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;font-family:monospace">
+          </div>
+          <button type="submit" class="btn btn-primary" style="white-space:nowrap">${dailyConfigured ? "Update Key" : "Save Key"}</button>
+        </form>
       </div>
     </div>`;
 
@@ -1226,7 +1240,7 @@ gcloud run services update clawmail-mcp \\
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div>
             <label style="font-size:.78rem;font-weight:600;color:#555;display:block;margin-bottom:4px">Client ID</label>
-            <input type="text" name="client_id" value="${escHtml(config.googleMeet.clientId)}" placeholder="123456789-abc.apps.googleusercontent.com"
+            <input type="text" name="client_id" value="${escHtml(storedClientId)}" placeholder="123456789-abc.apps.googleusercontent.com"
               style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace">
           </div>
           <div>
@@ -1491,6 +1505,26 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // POST /dashboard/integrations/daily/save — save Daily.co key to Secret Manager
+  if (path === "/dashboard/integrations/daily/save" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const apiKey = (form["api_key"] ?? "").trim();
+    if (!apiKey) {
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent("API key must not be empty") });
+      res.end();
+      return;
+    }
+    try {
+      await writeSecret("daily-api-key", apiKey);
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&ok=" + encodeURIComponent("Daily.co API key saved — active immediately") });
+    } catch (e) {
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)) });
+    }
+    res.end();
+    return;
+  }
+
   // POST /dashboard/integrations/google/connect — build OAuth URL and redirect
   if (path === "/dashboard/integrations/google/connect" && req.method === "POST") {
     const body = await readBody(req);
@@ -1533,50 +1567,15 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
       const redirectUri = `${serviceUrl2}/dashboard/integrations/google/callback`;
       const { refreshToken, email } = await exchangeCode({ code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri });
 
-      // Show the token + setup commands — admin stores it permanently
-      const gcpProject = process.env.GOOGLE_CLOUD_PROJECT ?? "YOUR_PROJECT";
-      const html = page("Google Meet Connected", `
-        ${topbar()}
-        ${tabBar("integrations")}
-        <div class="container">
-          <div class="card">
-            <div style="text-align:center;padding:12px 0 20px">
-              <div style="font-size:2rem;margin-bottom:8px">🎉</div>
-              <div style="font-size:1.1rem;font-weight:700;color:#166534">Authorized as ${escHtml(email)}</div>
-              <div style="font-size:.85rem;color:#888;margin-top:4px">Copy your refresh token and run the commands below to activate Google Meet.</div>
-            </div>
+      // Auto-save all three credentials to Secret Manager
+      await Promise.all([
+        writeSecret("google-meet-client-id",     creds.clientId),
+        writeSecret("google-meet-client-secret",  creds.clientSecret),
+        writeSecret("google-meet-refresh-token",  refreshToken),
+      ]);
 
-            <div style="margin-bottom:20px">
-              <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">Your refresh token (copy this):</div>
-              <div style="display:flex;align-items:center;gap:8px">
-                <code id="token" style="flex:1;background:#f8fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;font-size:.78rem;word-break:break-all;color:#1a1a2e">${escHtml(refreshToken)}</code>
-                <button onclick="navigator.clipboard.writeText(document.getElementById('token').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)"
-                  class="btn btn-primary" style="white-space:nowrap;flex-shrink:0">Copy</button>
-              </div>
-            </div>
-
-            <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">Run these commands to activate:</div>
-            <div class="code-block" style="font-size:.78rem">
-# Store credentials in Secret Manager
-echo -n "${escHtml(creds.clientId)}" | gcloud secrets create google-meet-client-id --data-file=- --project=${escHtml(gcpProject)}
-echo -n "${escHtml(creds.clientSecret)}" | gcloud secrets create google-meet-client-secret --data-file=- --project=${escHtml(gcpProject)}
-echo -n "PASTE_REFRESH_TOKEN_HERE" | gcloud secrets create google-meet-refresh-token --data-file=- --project=${escHtml(gcpProject)}
-
-# Update Cloud Run to use them
-gcloud run services update clawmail-mcp --region us-west1 --project=${escHtml(gcpProject)} \\
-  --update-secrets=GOOGLE_MEET_CLIENT_ID=google-meet-client-id:latest,\\
-GOOGLE_MEET_CLIENT_SECRET=google-meet-client-secret:latest,\\
-GOOGLE_MEET_REFRESH_TOKEN=google-meet-refresh-token:latest
-            </div>
-
-            <div style="margin-top:16px">
-              <a href="/dashboard?tab=integrations" class="btn btn-primary">← Back to Integrations</a>
-            </div>
-          </div>
-        </div>
-      `);
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&ok=" + encodeURIComponent(`Google Meet connected as ${email}`) });
+      res.end();
     } catch (e) {
       res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)) });
       res.end();
@@ -1601,7 +1600,7 @@ GOOGLE_MEET_REFRESH_TOKEN=google-meet-refresh-token:latest
       ? { type: "ok" as const, msg: url.searchParams.get("ok")! }
       : undefined;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(buildIntegrationsPage(serviceUrl2, flashMsg));
+    res.end(await buildIntegrationsPage(serviceUrl2, flashMsg));
     return;
   }
 

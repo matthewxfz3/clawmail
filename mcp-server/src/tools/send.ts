@@ -281,9 +281,9 @@ export async function toolSendEventInvite(
   // Resolve video URL — priority: explicit > Google Meet > Daily.co > none
   let resolvedLocation = params.video_url ?? params.location;
   if (!resolvedLocation) {
-    if (isMeetConfigured()) {
+    if (await isMeetConfigured()) {
       resolvedLocation = await createMeetSpace();
-    } else if (isDailyConfigured()) {
+    } else if (await isDailyConfigured()) {
       const roomName = `clawmail-${uid.split("@")[0].slice(0, 24)}`;
       resolvedLocation = await createDailyRoom({ name: roomName, expiresAt: end });
     }
