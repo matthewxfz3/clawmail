@@ -3,6 +3,7 @@ import { config } from "../config.js";
 import { JmapClient } from "../clients/jmap.js";
 import { randomUUID } from "node:crypto";
 import { createDailyRoom, isDailyConfigured } from "../clients/daily.js";
+import { createMeetSpace, isMeetConfigured } from "../clients/google-meet.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -277,11 +278,15 @@ export async function toolSendEventInvite(
   const uid = params.uid ?? `${randomUUID()}@${config.domain}`;
   const queuedAt = new Date().toISOString();
 
-  // Resolve video URL — explicit > Daily.co auto-create > none
-  let resolvedLocation = params.location;
-  if (!resolvedLocation && isDailyConfigured()) {
-    const roomName = `clawmail-${uid.split("@")[0].slice(0, 24)}`;
-    resolvedLocation = await createDailyRoom({ name: roomName, expiresAt: end });
+  // Resolve video URL — priority: explicit > Google Meet > Daily.co > none
+  let resolvedLocation = params.video_url ?? params.location;
+  if (!resolvedLocation) {
+    if (isMeetConfigured()) {
+      resolvedLocation = await createMeetSpace();
+    } else if (isDailyConfigured()) {
+      const roomName = `clawmail-${uid.split("@")[0].slice(0, 24)}`;
+      resolvedLocation = await createDailyRoom({ name: roomName, expiresAt: end });
+    }
   }
 
   // Build iCalendar payload
