@@ -221,6 +221,41 @@ function buildIcs(params: {
   return lines.join("\r\n");
 }
 
+function buildCancelIcs(params: {
+  uid: string;
+  organizer: string;
+  attendees: string[];
+  title: string;
+  start: string;
+  end: string;
+  cancelledAt: string;
+  sequence: number;
+}): string {
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Clawmail//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:CANCEL",
+    "BEGIN:VEVENT",
+    foldLine(`UID:${params.uid}`),
+    foldLine(`DTSTART:${toICalDate(params.start)}`),
+    foldLine(`DTEND:${toICalDate(params.end)}`),
+    foldLine(`DTSTAMP:${toICalDate(params.cancelledAt)}`),
+    foldLine(`SUMMARY:Cancelled: ${icalEscape(params.title)}`),
+    foldLine(`ORGANIZER;CN=${icalEscape(params.organizer)}:mailto:${params.organizer}`),
+    foldLine(`SEQUENCE:${params.sequence}`),
+    "STATUS:CANCELLED",
+  ];
+
+  for (const att of params.attendees) {
+    lines.push(foldLine(`ATTENDEE;ROLE=REQ-PARTICIPANT;RSVP=FALSE;CN=${icalEscape(att)}:mailto:${att}`));
+  }
+
+  lines.push("END:VEVENT", "END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
 // ---------------------------------------------------------------------------
 // Tool: send_event_invite
 // ---------------------------------------------------------------------------
@@ -343,5 +378,96 @@ export async function toolSendEventInvite(
     queued_at: queuedAt,
     uid,
     video_url: resolvedLocation ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tool: cancel_event_invite
+// ---------------------------------------------------------------------------
+
+export interface CancelEventInviteParams {
+  fromAccount: string;
+  to: string | string[];
+  uid: string;
+  title: string;
+  start: string;
+  end: string;
+  /** Increment if you have previously sent cancellation updates for this UID */
+  sequence?: number;
+}
+
+export async function toolCancelEventInvite(
+  params: CancelEventInviteParams,
+): Promise<{ message: string; cancelled_at: string }> {
+  const { fromAccount, to, uid, title, start, end } = params;
+
+  const fromEmail = fromAccount.includes("@")
+    ? fromAccount
+    : `${fromAccount}@${config.domain}`;
+
+  if (!isValidEmail(fromEmail)) {
+    throw new Error(`Invalid from_account: "${fromAccount}"`);
+  }
+
+  const domain = fromEmail.split("@")[1];
+  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+    throw new Error(
+      `from_account must belong to the configured domain "${config.domain}", got "${domain}"`,
+    );
+  }
+
+  if (!uid.trim()) throw new Error("uid is required to cancel an invite");
+  if (!title.trim()) throw new Error("title must not be empty");
+
+  const startMs = new Date(start).getTime();
+  const endMs   = new Date(end).getTime();
+  if (isNaN(startMs)) throw new Error(`start is not a valid ISO 8601 date-time: "${start}"`);
+  if (isNaN(endMs))   throw new Error(`end is not a valid ISO 8601 date-time: "${end}"`);
+
+  const toList = Array.isArray(to) ? to : [to];
+  validateAddressList(toList, "to");
+
+  const sequence    = params.sequence ?? 1;
+  const cancelledAt = new Date().toISOString();
+
+  const icsContent = buildCancelIcs({
+    uid,
+    organizer: fromEmail,
+    attendees: toList,
+    title,
+    start,
+    end,
+    cancelledAt,
+    sequence,
+  });
+
+  const fromDomain = fromEmail.split("@")[1].toLowerCase();
+  const useVerifiedSender = fromDomain !== config.domain.toLowerCase();
+  const VERIFIED_SENDER = config.sendgrid.verifiedSender;
+
+  await getTransporter().sendMail({
+    from: useVerifiedSender
+      ? `"${fromEmail} via Clawmail" <${VERIFIED_SENDER}>`
+      : fromEmail,
+    replyTo: useVerifiedSender ? fromEmail : undefined,
+    to: toList.join(", "),
+    subject: `Cancelled: ${title}`,
+    text: `The event "${title}" has been cancelled.\n\nThis cancellation is attached as a calendar file (.ics).`,
+    icalEvent: {
+      method: "CANCEL",
+      content: icsContent,
+    },
+    attachments: [
+      {
+        filename: "cancel.ics",
+        content: icsContent,
+        contentType: "application/ics",
+      },
+    ],
+  });
+
+  return {
+    message: `Cancellation for "${title}" (uid: ${uid}) sent from ${fromEmail} to ${toList.join(", ")}`,
+    cancelled_at: cancelledAt,
   };
 }
