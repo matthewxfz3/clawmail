@@ -791,102 +791,82 @@ function buildFolderTabBar(
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Calendars & Rules (cross-account summary)
+// Tab: Calendars & Rules (account list → click into per-account view)
 // ---------------------------------------------------------------------------
 
 async function buildCalendarsTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
-  const capped = accounts.slice(0, 10);
+  if (accounts.length === 0) {
+    return `<div class="card"><h2>Calendars &amp; Rules</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`;
+  }
 
+  const capped = accounts.slice(0, 50);
+
+  // Fetch event + rule counts for every account in parallel
   const [eventResults, ruleResults] = await Promise.all([
     Promise.allSettled(capped.map(async (a) => {
       const { events } = await toolListEvents({ account: a.email });
       return { email: a.email, events };
     })),
     Promise.allSettled(capped.map(async (a) => {
-      const { rules } = await toolListRules({ account: a.email });
-      return { email: a.email, rules };
+      const { count } = await toolListRules({ account: a.email });
+      return { email: a.email, count };
     })),
   ]);
 
-  // Flatten events across all accounts, sorted ascending by start
-  const allEvents: Array<CalendarEvent & { accountEmail: string }> = [];
+  const eventMap = new Map<string, CalendarEvent[]>();
   for (const r of eventResults) {
-    if (r.status === "fulfilled") {
-      for (const ev of r.value.events) {
-        allEvents.push({ ...ev, accountEmail: r.value.email });
-      }
-    }
+    if (r.status === "fulfilled") eventMap.set(r.value.email, r.value.events);
   }
-  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-
-  const eventRows = allEvents.length === 0
-    ? `<tr><td colspan="5" class="empty" style="padding:24px;text-align:center">
-        <div style="font-size:1rem;margin-bottom:6px">📅</div>
-        <div>No calendar events across any account.</div>
-        <div style="font-size:.78rem;color:#bbb;margin-top:4px">Use <code>create_event</code> to add events.</div>
-      </td></tr>`
-    : allEvents.map(ev => `
-      <tr>
-        <td class="mono">${escHtml(ev.accountEmail)}</td>
-        <td style="font-weight:500">${escHtml(ev.title)}</td>
-        <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.start)}</td>
-        <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.end)}</td>
-        <td>${formatEventBadge(ev.start)}</td>
-      </tr>`).join("");
-
-  // Flatten rules across all accounts
-  const allRules: Array<MailboxRule & { accountEmail: string }> = [];
+  const ruleCountMap = new Map<string, number>();
   for (const r of ruleResults) {
-    if (r.status === "fulfilled") {
-      for (const rule of r.value.rules) {
-        allRules.push({ ...rule, accountEmail: r.value.email });
-      }
-    }
+    if (r.status === "fulfilled") ruleCountMap.set(r.value.email, r.value.count);
   }
 
-  const ruleRows = allRules.length === 0
-    ? `<tr><td colspan="4" class="empty" style="padding:24px;text-align:center">
-        <div style="font-size:1rem;margin-bottom:6px">⚙️</div>
-        <div>No mailbox rules configured.</div>
-        <div style="font-size:.78rem;color:#bbb;margin-top:4px">Use <code>create_rule</code> to add rules.</div>
-      </td></tr>`
-    : allRules.map(rule => `
-      <tr>
-        <td class="mono">${escHtml(rule.accountEmail)}</td>
-        <td style="font-weight:500">${escHtml(rule.name)}</td>
-        <td>${formatCondition(rule.condition)}</td>
-        <td>${formatAction(rule.action)}</td>
-      </tr>`).join("");
+  const rows = capped.map((a, i) => {
+    const events = eventMap.get(a.email) ?? [];
+    const ruleCount = ruleCountMap.get(a.email) ?? 0;
+    const upcoming = events.filter(e => new Date(e.start).getTime() > Date.now());
+    const nextEvent = upcoming.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())[0];
+    const nextStr = nextEvent
+      ? `<span style="font-weight:500">${escHtml(nextEvent.title)}</span> <span style="color:#888;font-size:.8rem">${formatDateShort(nextEvent.start)}</span>`
+      : `<span style="color:#ccc;font-size:.82rem">—</span>`;
+    const evBadge = events.length > 0
+      ? `<span style="font-weight:600;color:#4f46e5">${events.length}</span><span style="color:#aaa;font-size:.78rem"> (${upcoming.length} upcoming)</span>`
+      : `<span style="color:#ccc">0</span>`;
+    const ruleBadge = ruleCount > 0
+      ? `<span style="font-weight:600;color:#4f46e5">${ruleCount}</span>`
+      : `<span style="color:#ccc">0</span>`;
 
-  const cappedNote = accounts.length > 10
-    ? `<p style="font-size:.72rem;color:#aaa;margin-top:10px">Showing top 10 of ${accounts.length} accounts.</p>`
+    return `<tr>
+      <td style="color:#aaa;font-size:.78rem;width:28px;text-align:right;padding-right:12px">${i + 1}</td>
+      <td><span style="font-weight:600;color:#1a1a2e">${escHtml(a.email)}</span></td>
+      <td>${evBadge}</td>
+      <td>${nextStr}</td>
+      <td>${ruleBadge}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__calendar" style="font-size:.78rem;padding:4px 10px;margin-right:4px">📅 Calendar</a>
+        <a class="btn" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__rules" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569">⚙️ Rules</a>
+      </td>
+    </tr>`;
+  }).join("");
+
+  const cappedNote = accounts.length > 50
+    ? `<p style="font-size:.72rem;color:#aaa;margin-top:8px">Showing first 50 of ${accounts.length} accounts.</p>`
     : "";
 
   return `
     <div class="card">
-      <h2>Upcoming events</h2>
+      <h2>Agent accounts — calendars &amp; rules (${accounts.length})</h2>
       <table>
         <thead><tr>
-          <th>Account</th>
-          <th>Title</th>
-          <th>Start</th>
-          <th>End</th>
-          <th>Status</th>
+          <th style="width:28px"></th>
+          <th>Email address</th>
+          <th>Events</th>
+          <th>Next event</th>
+          <th>Rules</th>
+          <th></th>
         </tr></thead>
-        <tbody>${eventRows}</tbody>
-      </table>
-      ${cappedNote}
-    </div>
-    <div class="card">
-      <h2>Active rules</h2>
-      <table>
-        <thead><tr>
-          <th>Account</th>
-          <th>Rule name</th>
-          <th>Condition</th>
-          <th>Action</th>
-        </tr></thead>
-        <tbody>${ruleRows}</tbody>
+        <tbody>${rows}</tbody>
       </table>
       ${cappedNote}
     </div>
