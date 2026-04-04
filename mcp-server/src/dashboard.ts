@@ -8,7 +8,9 @@ import { toolSendEmail } from "./tools/send.js";
 import { toolListEvents, type CalendarEvent } from "./tools/calendar.js";
 import { toolListRules, type RuleCondition, type RuleAction, type MailboxRule } from "./tools/rules.js";
 import { JmapClient } from "./clients/jmap.js";
-import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
+import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt, getCallLog, getBatchLog } from "./metrics.js";
+import { toolConfigureAccount, getAccountSettings } from "./tools/configure.js";
+import { toolCreateFolder, toolDeleteFolder } from "./tools/folders.js";
 import { buildAuthUrl, exchangeCode, isMeetConfigured } from "./clients/google-meet.js";
 import { readSecret, writeSecret } from "./clients/secret-manager.js";
 
@@ -168,6 +170,23 @@ const CSS = `
   button[type=submit]{width:100%;padding:11px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-size:.95rem;font-weight:600;cursor:pointer}
   button[type=submit]:hover{background:#2d2d4e}
   .error-msg{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:10px 14px;font-size:.85rem;margin-bottom:18px}
+  /* Calendar grid */
+  .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:.9rem}
+  .cal-nav a{color:#4f46e5;padding:4px 10px;border:1px solid #e5e7eb;border-radius:6px;text-decoration:none}
+  .cal-nav a:hover{background:#f5f3ff}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border-left:1px solid #e5e7eb;border-top:1px solid #e5e7eb}
+  .cal-header{padding:6px;font-size:.75rem;font-weight:700;color:#888;text-align:center;background:#f8f9fa;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
+  .cal-cell{min-height:80px;padding:4px;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:.75rem;vertical-align:top}
+  .cal-cell.cal-other-month{background:#f9fafb}
+  .cal-cell.cal-today{background:#f5f3ff}
+  .cal-day-num{font-size:.75rem;font-weight:600;color:#888;margin-bottom:2px}
+  details.cal-event{background:#dbeafe;border-radius:3px;margin-bottom:2px;font-size:.72rem;cursor:pointer}
+  details.cal-event summary{padding:2px 5px;list-style:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#1d4ed8;font-weight:500}
+  details.cal-event summary::-webkit-details-marker{display:none}
+  details.cal-event[open] summary{background:#bfdbfe;white-space:normal}
+  details.cal-event.cal-past{background:#f1f5f9}
+  details.cal-event.cal-past summary{color:#64748b}
+  .cal-detail{padding:6px 8px;border-top:1px solid rgba(0,0,0,.08);background:#fff;font-size:.77rem;line-height:1.5;color:#374151}
 `;
 
 function page(title: string, body: string): string {
@@ -180,11 +199,12 @@ function topbar(extra = ""): string {
 
 function tabBar(active: string): string {
   const tabs = [
-    { id: "overview",      label: "Overview",          href: "/dashboard" },
-    { id: "inboxes",       label: "Inboxes",            href: "/dashboard?tab=inboxes" },
-    { id: "metrics",       label: "Metrics",            href: "/dashboard?tab=metrics" },
-    { id: "calendars",     label: "Calendars & Rules",  href: "/dashboard?tab=calendars" },
-    { id: "integrations",  label: "⚙ Integrations",    href: "/dashboard?tab=integrations" },
+    { id: "overview",      label: "Overview",           href: "/dashboard" },
+    { id: "inboxes",       label: "Inboxes",             href: "/dashboard?tab=inboxes" },
+    { id: "metrics",       label: "Metrics",             href: "/dashboard?tab=metrics" },
+    { id: "calendars",     label: "Calendars & Rules",   href: "/dashboard?tab=calendars" },
+    { id: "storage",       label: "Storage",             href: "/dashboard?tab=storage" },
+    { id: "integrations",  label: "⚙ Integrations",     href: "/dashboard?tab=integrations" },
   ];
   const links = tabs.map(t =>
     `<a href="${t.href}" class="${active === t.id ? "active" : ""}">${t.label}</a>`
@@ -497,6 +517,38 @@ async function buildInboxesTab(accounts: Array<{ email: string; name: string }>)
 }
 
 // ---------------------------------------------------------------------------
+// Batch send history card (server-side rendered)
+// ---------------------------------------------------------------------------
+
+function buildBatchHistoryCard(): string {
+  const log = getBatchLog();
+  if (log.length === 0) {
+    return `<div class="card"><h2>Batch send history</h2><p class="empty" style="margin:0">No batch sends recorded this session.</p></div>`;
+  }
+  const rows = [...log].reverse().map(e => {
+    const failedStyle = e.failed > 0 ? "color:#dc2626;font-weight:600" : "";
+    const errDetails = e.errors.length > 0
+      ? `<details style="margin-top:4px"><summary style="cursor:pointer;font-size:.78rem;color:#888">Show ${e.errors.length} error(s)</summary><ul style="margin:6px 0 0 16px;font-size:.78rem;color:#dc2626">${e.errors.map(er => `<li>${escHtml(er)}</li>`).join("")}</ul></details>`
+      : "";
+    return `<tr>
+      <td style="white-space:nowrap;font-size:.78rem;color:#888">${new Date(e.ts).toLocaleTimeString()}</td>
+      <td style="font-size:.82rem">${escHtml(e.account)}</td>
+      <td style="font-family:monospace;font-size:.82rem">${escHtml(e.template_id.slice(0, 12))}…</td>
+      <td class="num">${e.total}</td>
+      <td class="num" style="color:#22c55e">${e.sent}</td>
+      <td class="num" style="${failedStyle}">${e.failed}${errDetails}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="card">
+    <h2>Batch send history <span style="font-size:.75rem;color:#aaa;font-weight:400">(last ${log.length}, newest first)</span></h2>
+    <table>
+      <thead><tr><th>Time</th><th>Account</th><th>Template</th><th style="text-align:right">Total</th><th style="text-align:right">Sent</th><th style="text-align:right">Failed</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Tab: Metrics
 // ---------------------------------------------------------------------------
 
@@ -534,30 +586,23 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
     <div class="metric-card"><div class="metric-big" style="color:${m.totalErrors > 0 ? "#dc2626" : "#22c55e"}">${m.totalErrors}</div><div class="metric-label">Total errors</div></div>
   `;
 
-  // Tool breakdown table — all 45 tools
+  // Tool breakdown table — 25 live tools
   const TOOLS = [
-    // Account management
-    "create_account", "list_accounts", "delete_account",
-    // Mailbox
-    "list_emails", "read_email", "delete_email", "search_emails",
-    "mark_as_read", "mark_as_unread", "flag_email",
-    // Folders
-    "list_folders", "create_folder", "delete_folder", "move_email",
-    // Bulk
-    "bulk_move_emails", "bulk_delete_emails", "bulk_add_label",
-    // Send
-    "send_email", "reply_to_email", "forward_email", "send_event_invite", "cancel_event_invite",
-    // Calendar
-    "create_event", "list_events", "get_event", "update_event", "delete_event", "check_availability",
-    // Spam
-    "mark_as_spam", "mark_as_not_spam",
-    // Rules
-    "create_rule", "list_rules", "delete_rule", "apply_rules",
-    // Filters
-    "add_to_whitelist", "remove_from_whitelist", "list_whitelist",
-    "add_to_blacklist", "remove_from_blacklist", "list_blacklist", "apply_spam_filter",
-    // Labels
-    "add_label", "remove_label", "list_labels", "search_by_label",
+    // Account
+    "create_account", "list_accounts", "delete_account", "configure_account",
+    // Email read
+    "list_emails", "read_email", "search_emails",
+    // Email mutations
+    "update_email", "update_thread", "classify_email",
+    // Send / compose
+    "send_email", "reply_to_email", "forward_email",
+    "send_event_invite", "cancel_event_invite", "respond_to_invite",
+    // Drafts & batch
+    "manage_draft", "send_batch",
+    // Organization
+    "manage_folder", "manage_rule", "manage_sender_list", "manage_event",
+    // Storage / data
+    "manage_contact", "manage_template", "manage_webhook",
   ];
   const toolRows = TOOLS.map(tool => {
     const t = m.tools[tool] ?? { calls: 0, errors: 0, rateLimitHits: 0, lastCalledAt: null };
@@ -609,6 +654,19 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
       <div class="warn-note" style="margin-top:16px">⚠ Counters reset on instance restart. Sampling since: ${escHtml(startedAt)}</div>
     </div>
 
+    <div class="card" id="error-log-card">
+      <details>
+        <summary style="cursor:pointer;font-size:1rem;font-weight:600;padding:2px 0" id="error-log-summary">Recent errors — loading…</summary>
+        <div id="error-log-body" style="margin-top:12px"></div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Recent tool calls <span style="font-size:.75rem;color:#aaa;font-weight:400">(last 200, newest first)</span></h2>
+      <div class="warn-note" style="margin-bottom:12px">⚠ Resets on process restart.</div>
+      <div id="tool-log-body">Loading…</div>
+    </div>
+
     <div class="card">
       <h2>MCP tool call breakdown</h2>
       <table>
@@ -634,6 +692,8 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
       ${accounts.length > 20 ? `<p style="font-size:.78rem;color:#888;margin-top:8px">Showing first 20 of ${accounts.length} accounts.</p>` : ""}
     </div>
 
+    ${buildBatchHistoryCard()}
+
     <div class="card">
       <h2>Component status</h2>
       ${statusGroup(checkMcpServerGroup())}
@@ -643,6 +703,55 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
     (function() {
+      // Tool call log fetch
+      fetch('/dashboard/tool-log', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var entries = data.entries || [];
+          var errEntries = entries.filter(function(e) { return e.status === 'error'; });
+
+          // Update error log summary
+          var summary = document.getElementById('error-log-summary');
+          if (errEntries.length === 0) {
+            summary.innerHTML = '<span style="color:#22c55e">&#10003;</span> Recent errors \u2014 none';
+          } else {
+            summary.innerHTML = 'Recent errors \u2014 <span style="color:#dc2626;font-weight:700">' + errEntries.length + '</span>';
+            var errBody = document.getElementById('error-log-body');
+            errBody.innerHTML = '<table><thead><tr><th>Time</th><th>Tool</th><th>Account</th><th>Error</th></tr></thead><tbody>' +
+              errEntries.map(function(e) {
+                return '<tr style="background:#fff8f8"><td style="white-space:nowrap;font-size:.78rem;color:#888">' + new Date(e.ts).toLocaleTimeString() + '</td>' +
+                  '<td><code>' + e.tool + '</code></td>' +
+                  '<td style="font-size:.82rem;color:#888">' + (e.account || '\u2014') + '</td>' +
+                  '<td style="color:#dc2626;font-size:.82rem">' + (e.errorMsg || '') + '</td></tr>';
+              }).join('') + '</tbody></table>';
+          }
+
+          // Tool call log table
+          var logBody = document.getElementById('tool-log-body');
+          if (entries.length === 0) {
+            logBody.innerHTML = '<p style="color:#888;font-size:.88rem">No tool calls recorded yet.</p>';
+            return;
+          }
+          logBody.innerHTML = '<table><thead><tr><th>Time</th><th>Tool</th><th>Account</th><th style="text-align:right">ms</th><th>Status</th></tr></thead><tbody>' +
+            entries.slice(0, 200).map(function(e) {
+              var statusHtml = e.status === 'ok'
+                ? '<span class="pill green">ok</span>'
+                : e.status === 'ratelimit'
+                ? '<span class="pill" style="background:#fef3c7;color:#92400e">rate limit</span>'
+                : '<span class="pill red">error</span>';
+              var errDetail = e.errorMsg ? '<div style="font-size:.75rem;color:#dc2626;margin-top:1px">' + e.errorMsg.slice(0, 120) + '</div>' : '';
+              return '<tr><td style="white-space:nowrap;font-size:.78rem;color:#888">' + new Date(e.ts).toLocaleTimeString() + '</td>' +
+                '<td><code>' + e.tool + '</code>' + errDetail + '</td>' +
+                '<td style="font-size:.82rem;color:#888">' + (e.account || '\u2014') + '</td>' +
+                '<td class="num" style="font-family:monospace">' + e.durationMs + '</td>' +
+                '<td>' + statusHtml + '</td></tr>';
+            }).join('') + '</tbody></table>';
+        })
+        .catch(function() {
+          document.getElementById('tool-log-body').textContent = 'Failed to load log.';
+          document.getElementById('error-log-summary').textContent = 'Recent errors \u2014 unavailable';
+        });
+
       fetch('/dashboard/metrics-data', { credentials: 'same-origin' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -872,7 +981,9 @@ async function buildCalendarsTab(accounts: Array<{ email: string; name: string }
       <td>${ruleBadge}</td>
       <td style="text-align:right;white-space:nowrap">
         <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__calendar" style="font-size:.78rem;padding:4px 10px;margin-right:4px">📅 Calendar</a>
-        <a class="btn" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__rules" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569">⚙️ Rules</a>
+        <a class="btn" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__rules" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569;margin-right:4px">⚙️ Rules</a>
+        <a class="btn" href="/dashboard/folders?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569;margin-right:4px">📁 Folders</a>
+        <a class="btn" href="/dashboard/account-settings?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569">⚙ Settings</a>
       </td>
     </tr>`;
   }).join("");
@@ -904,7 +1015,12 @@ async function buildCalendarsTab(accounts: Array<{ email: string; name: string }
 // Sub-page: Account calendar
 // ---------------------------------------------------------------------------
 
-async function buildAccountCalendarPage(account: string): Promise<string> {
+async function buildAccountCalendarPage(account: string, month?: string): Promise<string> {
+  const now = new Date();
+  const monthStr = month && /^\d{4}-\d{2}$/.test(month)
+    ? month
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
   const client = new JmapClient(account);
   const [eventsResult, mailboxesResult] = await Promise.allSettled([
     toolListEvents({ account }),
@@ -915,27 +1031,9 @@ async function buildAccountCalendarPage(account: string): Promise<string> {
   const fetchError = eventsResult.status === "rejected" ? String(eventsResult.reason) : null;
   const mailboxes = mailboxesResult.status === "fulfilled" ? mailboxesResult.value : [];
 
-  const rows = fetchError
-    ? `<tr><td colspan="5" style="color:#dc2626;padding:16px">Failed to load events: ${escHtml(fetchError)}</td></tr>`
-    : events.length === 0
-    ? `<tr><td colspan="5" class="empty" style="padding:32px;text-align:center">
-        <div style="font-size:1.2rem;margin-bottom:8px">📅</div>
-        <div style="font-weight:600">No calendar events</div>
-        <div style="font-size:.82rem;color:#bbb;margin-top:4px">Use the <code>create_event</code> MCP tool to schedule events.</div>
-      </td></tr>`
-    : events.map(ev => {
-        const desc = ev.description ? `<span class="row-detail">${escHtml(ev.description.slice(0, 80))}${ev.description.length > 80 ? "…" : ""}</span>` : "";
-        const attendees = ev.attendees?.length
-          ? `<span style="font-size:.78rem;color:#888">${ev.attendees.map(escHtml).join(", ")}</span>`
-          : `<span style="color:#ccc;font-size:.78rem">—</span>`;
-        return `<tr>
-          <td>${escHtml(ev.title)}${desc}</td>
-          <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.start)}</td>
-          <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.end)}</td>
-          <td>${attendees}</td>
-          <td>${formatEventBadge(ev.start)}</td>
-        </tr>`;
-      }).join("");
+  const gridOrError = fetchError
+    ? `<div style="padding:24px;color:#dc2626">Failed to load events: ${escHtml(fetchError)}</div>`
+    : buildCalendarGrid(events, monthStr, account);
 
   return page(`Calendar — ${account}`, `
     ${topbar()}
@@ -946,21 +1044,9 @@ async function buildAccountCalendarPage(account: string): Promise<string> {
         <div class="page-title">${escHtml(account)}</div>
         <div class="page-sub">Calendar — ${events.length} event${events.length !== 1 ? "s" : ""}</div>
       </div>
-      <div class="card" style="padding:20px 20px 0">
+      <div class="card" style="padding:20px">
         ${buildFolderTabBar(account, mailboxes, "__calendar")}
-        <div style="margin:0 -20px">
-          <table>
-            <thead><tr>
-              <th style="padding-left:20px">Title</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Attendees</th>
-              <th>Status</th>
-            </tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <div style="height:16px"></div>
+        ${gridOrError}
       </div>
     </div>
   `);
@@ -1031,9 +1117,9 @@ async function buildAccountRulesPage(account: string): Promise<string> {
 // Sub-page: Account inbox
 // ---------------------------------------------------------------------------
 
-async function buildInboxPage(account: string, folder = "Inbox"): Promise<string> {
+async function buildInboxPage(account: string, folder = "Inbox", month?: string): Promise<string> {
   // Pseudo-folder interception for calendar and rules views
-  if (folder === "__calendar") return buildAccountCalendarPage(account);
+  if (folder === "__calendar") return buildAccountCalendarPage(account, month);
   if (folder === "__rules")    return buildAccountRulesPage(account);
 
   const client = new JmapClient(account);
@@ -1362,6 +1448,394 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
 }
 
 // ---------------------------------------------------------------------------
+// Tab: Storage — system mailbox health + deep inspect
+// ---------------------------------------------------------------------------
+
+const SYSTEM_MAILBOX_PREFIXES: Record<string, string> = {
+  contacts:  "CONTACT:",
+  templates: "TEMPLATE:",
+  webhooks:  "WEBHOOK:",
+  scheduled: "SCHEDULED:",
+  rules:     "RULE:",
+  whitelist: "WHITELIST:",
+  blacklist: "BLACKLIST:",
+};
+
+async function buildStorageTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
+  const capped = accounts.slice(0, 20);
+
+  // Summary table: per-account system mailbox item counts
+  const summaryRows: string[] = [];
+  for (const acct of capped) {
+    const client = new JmapClient(acct.email);
+    const counts: Record<string, number> = {};
+    await Promise.allSettled(
+      Object.entries(SYSTEM_MAILBOX_PREFIXES).map(async ([key, prefix]) => {
+        const items = await client.listSystemEmails("_" + key).catch(() => [] as Array<{ subject: string; body: string; id: string }>);
+        counts[key] = items.filter(i => i.subject.startsWith(prefix)).length;
+      })
+    );
+    const cells = ["contacts","templates","webhooks","scheduled","rules","whitelist","blacklist"]
+      .map(k => `<td class="num">${counts[k] ?? "—"}</td>`).join("");
+    summaryRows.push(`<tr><td style="font-size:.85rem">${escHtml(acct.email)}</td>${cells}</tr>`);
+  }
+
+  const accountOptions = accounts.map(a => `<option value="${escHtml(a.email)}">${escHtml(a.email)}</option>`).join("");
+
+  return `
+    <div class="card">
+      <h2>System mailbox summary${capped.length < accounts.length ? ` (top ${capped.length})` : ""}</h2>
+      <table>
+        <thead><tr><th>Account</th><th style="text-align:right">Contacts</th><th style="text-align:right">Templates</th><th style="text-align:right">Webhooks</th><th style="text-align:right">Scheduled</th><th style="text-align:right">Rules</th><th style="text-align:right">Whitelist</th><th style="text-align:right">Blacklist</th></tr></thead>
+        <tbody>${summaryRows.join("") || `<tr><td colspan="8" class="empty">No accounts</td></tr>`}</tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Deep inspect account</h2>
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px">
+        <div>
+          <label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">Account</label>
+          <select id="inspect-account">${accountOptions}</select>
+        </div>
+        <button class="btn btn-primary" onclick="inspectAccount()">Inspect</button>
+      </div>
+      <div id="inspect-result" style="display:none"></div>
+    </div>
+
+    <script>
+    function inspectAccount() {
+      var acct = document.getElementById('inspect-account').value;
+      var panel = document.getElementById('inspect-result');
+      panel.style.display = 'block';
+      panel.innerHTML = '<p style="color:#888">Loading…</p>';
+      fetch('/dashboard/storage-data?account=' + encodeURIComponent(acct), { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var html = '';
+          // Warnings
+          var warns = [];
+          Object.keys(d.mailboxes || {}).forEach(function(k) {
+            if (d.mailboxes[k].parseErrors > 0) warns.push(k + ' (' + d.mailboxes[k].parseErrors + ' parse error(s))');
+          });
+          if (warns.length) html += '<div class="warn-note" style="margin-bottom:12px">⚠ Parse errors detected in: ' + warns.join(', ') + ' — some entries may be silently skipped</div>';
+          if ((d.mailboxes.webhooks || {}).count > 0) html += '<div class="warn-note" style="margin-bottom:12px">⚠ Webhook delivery is not yet implemented — these webhooks will never fire</div>';
+          if ((d.mailboxes.scheduled || {}).count > 0) html += '<div class="warn-note" style="margin-bottom:12px">⚠ No internal scheduler — scheduled drafts require an external cron to fire</div>';
+          if (d.errors && d.errors.length) html += '<div style="margin-bottom:12px;color:#dc2626;font-size:.82rem">Fetch errors: ' + d.errors.join('; ') + '</div>';
+
+          // Counts grid
+          var mb = d.mailboxes || {};
+          html += '<div class="metric-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">';
+          ['contacts','templates','rules','whitelist','blacklist'].forEach(function(k) {
+            html += '<div class="metric-card"><div class="metric-big">' + ((mb[k] || {}).count || 0) + '</div><div class="metric-label">' + k + '</div></div>';
+          });
+          html += '</div>';
+
+          // Webhooks table
+          if ((mb.webhooks || {}).items && mb.webhooks.items.length) {
+            html += '<h3 style="font-size:.9rem;margin-bottom:8px">Registered webhooks</h3><table><thead><tr><th>URL</th><th>Events</th><th>Registered</th></tr></thead><tbody>';
+            mb.webhooks.items.forEach(function(w) {
+              html += '<tr><td style="font-size:.82rem;word-break:break-all">' + w.url + '</td><td style="font-size:.78rem">' + (w.events || []).join(', ') + '</td><td style="font-size:.78rem;white-space:nowrap">' + new Date(w.createdAt).toLocaleDateString() + '</td></tr>';
+            });
+            html += '</tbody></table>';
+          }
+
+          // Scheduled drafts table
+          if ((mb.scheduled || {}).items && mb.scheduled.items.length) {
+            html += '<h3 style="font-size:.9rem;margin:16px 0 8px">Scheduled drafts</h3><table><thead><tr><th>Subject</th><th>To</th><th>Send at</th></tr></thead><tbody>';
+            mb.scheduled.items.forEach(function(s) {
+              var sendAt = s.send_at ? new Date(s.send_at).toLocaleString() : '—';
+              var isPast = s.send_at && new Date(s.send_at) < new Date();
+              html += '<tr><td style="font-size:.82rem">' + s.subject + '</td><td style="font-size:.78rem;color:#888">' + (s.to || []).slice(0,3).join(', ') + '</td><td style="font-size:.78rem;' + (isPast ? 'color:#dc2626' : '') + '">' + sendAt + (isPast ? ' (past!)' : '') + '</td></tr>';
+            });
+            html += '</tbody></table>';
+          }
+
+          panel.innerHTML = html;
+        })
+        .catch(function(e) { panel.innerHTML = '<p style="color:#dc2626">Failed to load: ' + e + '</p>'; });
+    }
+    </script>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Page: Account Settings
+// ---------------------------------------------------------------------------
+
+async function buildAccountSettingsPage(account: string, flash?: { ok?: string; err?: string }): Promise<string> {
+  const settings = await getAccountSettings(account).catch(() => ({} as Record<string, string>));
+  const flashHtml = flash?.ok
+    ? `<div style="margin-bottom:16px;padding:10px 16px;border-radius:6px;background:#dcfce7;color:#166534;border:1px solid #86efac;font-size:.85rem">✓ ${escHtml(flash.ok)}</div>`
+    : flash?.err
+    ? `<div style="margin-bottom:16px;padding:10px 16px;border-radius:6px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;font-size:.85rem">✗ ${escHtml(flash.err)}</div>`
+    : "";
+
+  const vacEnabled = !!(settings["vacation_reply"]);
+
+  return page(`Account Settings — ${account}`, `
+    ${topbar()}
+    ${tabBar("inboxes")}
+    <div class="container">
+      <a class="back-link" href="/dashboard?tab=inboxes">← All accounts</a>
+      <div class="page-title">${escHtml(account)}</div>
+      <div class="page-sub">Account Settings</div>
+      ${flashHtml}
+
+      <div class="card">
+        <h2>Display Name</h2>
+        <p style="font-size:.82rem;color:#888;margin-bottom:12px">Stored in Stalwart — current value not readable from dashboard.</p>
+        <form method="POST" action="/dashboard/action/configure-account" style="display:flex;gap:10px;align-items:flex-end">
+          <input type="hidden" name="a" value="${escHtml(account)}">
+          <input type="hidden" name="setting" value="display_name">
+          <div style="flex:1"><label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">New display name</label>
+            <input type="text" name="value" placeholder="e.g. Jane Smith" style="width:100%"></div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Email Signature</h2>
+        <form method="POST" action="/dashboard/action/configure-account">
+          <input type="hidden" name="a" value="${escHtml(account)}">
+          <input type="hidden" name="setting" value="signature">
+          <div style="margin-bottom:10px"><label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">Signature (plain text)</label>
+            <textarea name="value" rows="4" style="width:100%;resize:vertical">${escHtml(settings["signature"] ?? "")}</textarea></div>
+          <div style="display:flex;gap:8px">
+            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="submit" name="value" value="" class="btn">Clear</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Vacation Reply <span class="pill ${vacEnabled ? "green" : "gray"}">${vacEnabled ? "Enabled" : "Disabled"}</span></h2>
+        <form method="POST" action="/dashboard/action/configure-account">
+          <input type="hidden" name="a" value="${escHtml(account)}">
+          <input type="hidden" name="setting" value="vacation_reply">
+          <div style="margin-bottom:10px"><label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">Auto-reply message</label>
+            <textarea name="value" rows="4" style="width:100%;resize:vertical">${escHtml(settings["vacation_reply"] ?? "")}</textarea></div>
+          <div style="display:flex;gap:8px">
+            <button type="submit" class="btn btn-primary">Enable / Update</button>
+            <button type="submit" name="value" value="" class="btn">Disable (clear)</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Email Forwarding</h2>
+        <form method="POST" action="/dashboard/action/configure-account" style="display:flex;gap:10px;align-items:flex-end">
+          <input type="hidden" name="a" value="${escHtml(account)}">
+          <input type="hidden" name="setting" value="forwarding">
+          <div style="flex:1"><label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">Forward to address</label>
+            <input type="email" name="value" value="${escHtml(settings["forwarding"] ?? "")}" placeholder="forward@example.com" style="width:100%"></div>
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="submit" name="value" value="" class="btn">Disable</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Account Status</h2>
+        <p style="font-size:.82rem;color:#666;margin-bottom:12px">Suspending disables inbound delivery without deleting the account.</p>
+        <div style="display:flex;gap:10px">
+          <form method="POST" action="/dashboard/action/configure-account">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="setting" value="suspend">
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Suspend ${escHtml(account)}? Inbound delivery will stop.')">Suspend account</button>
+          </form>
+          <form method="POST" action="/dashboard/action/configure-account">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="setting" value="reactivate">
+            <button type="submit" class="btn btn-primary">Reactivate account</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Page: Folder Management
+// ---------------------------------------------------------------------------
+
+const SYSTEM_ROLES = new Set(["inbox", "sent", "drafts", "trash", "spam", "junk", "archive"]);
+
+async function buildFoldersPage(account: string, flash?: { ok?: string; err?: string }): Promise<string> {
+  const client = new JmapClient(account);
+  const mailboxes = await client.listMailboxes().catch(() => [] as Array<{ id: string; name: string; role: string; totalEmails: number; unreadEmails: number }>);
+  const visible = mailboxes.filter(m => !m.name.startsWith("_"));
+
+  const flashHtml = flash?.ok
+    ? `<div style="margin-bottom:16px;padding:10px 16px;border-radius:6px;background:#dcfce7;color:#166534;border:1px solid #86efac;font-size:.85rem">✓ ${escHtml(flash.ok)}</div>`
+    : flash?.err
+    ? `<div style="margin-bottom:16px;padding:10px 16px;border-radius:6px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;font-size:.85rem">✗ ${escHtml(flash.err)}</div>`
+    : "";
+
+  const userFolders = visible.filter(m => !SYSTEM_ROLES.has((m.role ?? "").toLowerCase()));
+  const folderOptions = userFolders.map(m => `<option value="${escHtml(m.name)}">${escHtml(m.name)}</option>`).join("");
+
+  const rows = visible
+    .sort((a, b) => {
+      const aSystem = SYSTEM_ROLES.has((a.role ?? "").toLowerCase());
+      const bSystem = SYSTEM_ROLES.has((b.role ?? "").toLowerCase());
+      if (aSystem !== bSystem) return aSystem ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    })
+    .map(m => {
+      const isSystem = SYSTEM_ROLES.has((m.role ?? "").toLowerCase());
+      const nameCell = isSystem
+        ? `<span style="font-weight:600">${escHtml(m.name)}</span>`
+        : `<details><summary style="cursor:pointer;font-weight:500">${escHtml(m.name)} <span style="color:#aaa;font-size:.8em">✎</span></summary>
+            <form method="POST" action="/dashboard/action/rename-folder" style="display:flex;gap:6px;margin-top:6px">
+              <input type="hidden" name="a" value="${escHtml(account)}">
+              <input type="hidden" name="folder" value="${escHtml(m.name)}">
+              <input type="text" name="new_name" value="${escHtml(m.name)}" required style="flex:1">
+              <button type="submit" class="btn btn-primary" style="font-size:.78rem;padding:3px 10px">Rename</button>
+            </form>
+          </details>`;
+      const roleCell = m.role ? `<span class="pill gray" style="font-size:.72rem">${escHtml(m.role)}</span>` : `<span style="color:#aaa">—</span>`;
+      const actionsCell = isSystem ? "" : `
+        <form method="POST" action="/dashboard/action/delete-folder" style="display:inline">
+          <input type="hidden" name="a" value="${escHtml(account)}">
+          <input type="hidden" name="folder" value="${escHtml(m.name)}">
+          <button type="submit" class="btn btn-danger" style="font-size:.78rem;padding:3px 10px"
+            onclick="return confirm('Delete folder ${escHtml(m.name)} and all its contents?')">Delete</button>
+        </form>`;
+      return `<tr>
+        <td>${nameCell}</td>
+        <td>${roleCell}</td>
+        <td class="num">${m.totalEmails}</td>
+        <td class="num">${m.unreadEmails}</td>
+        <td style="text-align:right">${actionsCell}</td>
+      </tr>`;
+    }).join("");
+
+  return page(`Folders — ${account}`, `
+    ${topbar()}
+    ${tabBar("inboxes")}
+    <div class="container">
+      <a class="back-link" href="/dashboard?tab=inboxes">← All accounts</a>
+      <div class="page-title">${escHtml(account)}</div>
+      <div class="page-sub">Folder Management — ${visible.length} folders</div>
+      ${flashHtml}
+
+      <div class="card">
+        <h2>New Folder</h2>
+        <form method="POST" action="/dashboard/action/create-folder" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+          <input type="hidden" name="a" value="${escHtml(account)}">
+          <div><label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">Folder name</label>
+            <input type="text" name="folder_name" required></div>
+          <div><label style="display:block;font-size:.82rem;font-weight:600;margin-bottom:4px">Parent folder (optional)</label>
+            <select name="parent_folder"><option value="">— top level —</option>${folderOptions}</select></div>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Folders (${visible.length})</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Role</th><th style="text-align:right">Emails</th><th style="text-align:right">Unread</th><th></th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="5" class="empty">No folders</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Calendar grid view helper
+// ---------------------------------------------------------------------------
+
+function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthStr);
+  const now = new Date();
+  const year  = match ? parseInt(match[1], 10) : now.getFullYear();
+  const month = match ? parseInt(match[2], 10) : now.getMonth() + 1;
+
+  const firstDay = new Date(year, month - 1, 1);
+  const lastDay  = new Date(year, month, 0);
+
+  // Build date → events map (events can span multiple days, cap at 14 days)
+  const byDay = new Map<string, CalendarEvent[]>();
+  for (const ev of events) {
+    const startD = new Date(ev.start);
+    const endD   = new Date(ev.end);
+    const cursor = new Date(startD);
+    cursor.setHours(0, 0, 0, 0);
+    const endDay = new Date(endD);
+    endDay.setHours(0, 0, 0, 0);
+    let span = 0;
+    while (cursor <= endDay && span++ < 15) {
+      const key = cursor.toISOString().slice(0, 10);
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key)!.push(ev);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  // Find Monday on or before 1st of month
+  const dow = (firstDay.getDay() + 6) % 7; // 0=Mon
+  const totalCells = lastDay.getDate() + dow > 35 ? 42 : 35;
+  const gridStart = new Date(firstDay);
+  gridStart.setDate(gridStart.getDate() - dow);
+
+  const todayStr = now.toISOString().slice(0, 10);
+  const cells: string[] = [];
+  const cursor = new Date(gridStart);
+  for (let i = 0; i < totalCells; i++) {
+    const dateStr = cursor.toISOString().slice(0, 10);
+    const inMonth = cursor.getMonth() === month - 1;
+    const isToday = dateStr === todayStr;
+    const dayEvents = byDay.get(dateStr) ?? [];
+
+    const badges = dayEvents.map(ev => {
+      const isPast = new Date(ev.end) < now;
+      const titleShort = ev.title.length > 28 ? ev.title.slice(0, 26) + "…" : ev.title;
+      const timeStr = new Date(ev.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const descHtml = ev.description ? `<div style="margin-top:3px;color:#666">${escHtml(ev.description.slice(0, 100))}</div>` : "";
+      const attHtml  = ev.attendees?.length ? `<div style="margin-top:3px;color:#888;font-size:.75rem">Attendees: ${escHtml(ev.attendees.slice(0, 5).join(", "))}</div>` : "";
+      return `<details class="cal-event${isPast ? " cal-past" : ""}">
+        <summary>${escHtml(timeStr)} ${escHtml(titleShort)}</summary>
+        <div class="cal-detail">
+          <div><strong>${escHtml(ev.title)}</strong></div>
+          <div style="color:#888;font-size:.78rem">${escHtml(new Date(ev.start).toLocaleString())} – ${escHtml(new Date(ev.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</div>
+          ${descHtml}${attHtml}
+        </div>
+      </details>`;
+    }).join("");
+
+    cells.push(`<div class="cal-cell${inMonth ? "" : " cal-other-month"}${isToday ? " cal-today" : ""}">
+      <div class="cal-day-num">${isToday ? `<div style="background:#4f46e5;color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.72rem">${cursor.getDate()}</div>` : cursor.getDate()}</div>
+      ${badges}
+    </div>`);
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const prevMonth = new Date(year, month - 2, 1);
+  const nextMonth = new Date(year, month, 1);
+  const prevStr   = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
+  const nextStr   = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}`;
+  const monthLabel = firstDay.toLocaleString("default", { month: "long", year: "numeric" });
+  const base = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar`;
+
+  return `
+    <div class="cal-nav">
+      <a href="${base}&month=${prevStr}">‹ Prev</a>
+      <strong>${escHtml(monthLabel)}</strong>
+      <a href="${base}&month=${nextStr}">Next ›</a>
+    </div>
+    <div class="cal-grid">
+      <div class="cal-header">Mon</div><div class="cal-header">Tue</div>
+      <div class="cal-header">Wed</div><div class="cal-header">Thu</div>
+      <div class="cal-header">Fri</div><div class="cal-header">Sat</div>
+      <div class="cal-header">Sun</div>
+      ${cells.join("")}
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Main dashboard page (tab routing)
 // ---------------------------------------------------------------------------
 
@@ -1380,6 +1854,8 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "
     content = await buildMetricsTab(accounts);
   } else if (tab === "calendars") {
     content = await buildCalendarsTab(accounts);
+  } else if (tab === "storage") {
+    content = await buildStorageTab(accounts);
   } else {
     content = await buildOverview(serviceUrl, accounts);
   }
@@ -1387,6 +1863,7 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "
   const activeTab = tab === "inboxes" ? "inboxes"
     : tab === "metrics" ? "metrics"
     : tab === "calendars" ? "calendars"
+    : tab === "storage" ? "storage"
     : tab === "integrations" ? "integrations"
     : "overview";
 
@@ -1462,6 +1939,13 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   if (path === "/dashboard/metrics-data") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ samples: getSamples() }));
+    return;
+  }
+
+  // GET /dashboard/tool-log — recent tool call log (newest first)
+  if (path === "/dashboard/tool-log") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ entries: [...getCallLog()].reverse() }));
     return;
   }
 
@@ -1573,13 +2057,14 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   if (path === "/dashboard/inbox") {
     const account = url.searchParams.get("a") ?? "";
     const folder = url.searchParams.get("folder") ?? "Inbox";
+    const month = url.searchParams.get("month") ?? undefined;
     if (!account) {
       res.writeHead(302, { "Location": "/dashboard?tab=inboxes" });
       res.end();
       return;
     }
     try {
-      const html = await buildInboxPage(account, folder);
+      const html = await buildInboxPage(account, folder, month);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
     } catch (e) {
@@ -1607,6 +2092,162 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(page("Error", `<div class="container" style="padding-top:40px"><div class="card"><p style="color:#dc2626">Error loading email: ${escHtml(String(e))}</p><a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(folder)}" class="back-link">← Back</a></div></div>`));
     }
+    return;
+  }
+
+  // GET /dashboard/account-settings?a=<email>
+  if (path === "/dashboard/account-settings") {
+    const account = url.searchParams.get("a") ?? "";
+    if (!account) { res.writeHead(302, { "Location": "/dashboard?tab=inboxes" }); res.end(); return; }
+    const flash = url.searchParams.get("ok") ? { ok: url.searchParams.get("ok")! }
+      : url.searchParams.get("err") ? { err: url.searchParams.get("err")! } : undefined;
+    try {
+      const html = await buildAccountSettingsPage(account, flash);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+    } catch (e) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(page("Error", `<div class="container" style="padding-top:40px"><div class="card"><p style="color:#dc2626">Error: ${escHtml(String(e))}</p><a href="/dashboard?tab=inboxes" class="back-link">← Back</a></div></div>`));
+    }
+    return;
+  }
+
+  // GET /dashboard/folders?a=<email>
+  if (path === "/dashboard/folders") {
+    const account = url.searchParams.get("a") ?? "";
+    if (!account) { res.writeHead(302, { "Location": "/dashboard?tab=inboxes" }); res.end(); return; }
+    const flash = url.searchParams.get("ok") ? { ok: url.searchParams.get("ok")! }
+      : url.searchParams.get("err") ? { err: url.searchParams.get("err")! } : undefined;
+    try {
+      const html = await buildFoldersPage(account, flash);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+    } catch (e) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(page("Error", `<div class="container" style="padding-top:40px"><div class="card"><p style="color:#dc2626">Error: ${escHtml(String(e))}</p><a href="/dashboard?tab=inboxes" class="back-link">← Back</a></div></div>`));
+    }
+    return;
+  }
+
+  // GET /dashboard/storage-data?account=<email> — JSON endpoint for storage inspect panel
+  if (path === "/dashboard/storage-data") {
+    const account = url.searchParams.get("account") ?? "";
+    if (!account) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "missing account" })); return; }
+    try {
+      const client = new JmapClient(account);
+      const prefixes: Record<string, string> = {
+        contacts:  "CONTACT:",
+        templates: "TEMPLATE:",
+        webhooks:  "WEBHOOK:",
+        scheduled: "SCHEDULED:",
+        rules:     "RULE:",
+        whitelist: "WHITELIST:",
+        blacklist: "BLACKLIST:",
+      };
+      const results = await Promise.allSettled(
+        Object.entries(prefixes).map(async ([key, prefix]) => {
+          const items = await client.listSystemEmails(key === "contacts" ? "_contacts"
+            : key === "templates" ? "_templates"
+            : key === "webhooks"  ? "_webhooks"
+            : key === "scheduled" ? "_scheduled"
+            : key === "rules"     ? "_rules"
+            : key === "whitelist" ? "_whitelist"
+            : "_blacklist");
+          let parseErrors = 0;
+          for (const item of items) {
+            if (item.subject?.startsWith(prefix)) {
+              try { JSON.parse(item.body || "{}"); } catch { parseErrors++; }
+            }
+          }
+          return { key, count: items.length, parseErrors };
+        })
+      );
+      const data: Record<string, { count: number; parseErrors: number }> = {};
+      for (const r of results) {
+        if (r.status === "fulfilled") data[r.value.key] = { count: r.value.count, parseErrors: r.value.parseErrors };
+        else data["error"] = { count: 0, parseErrors: 0 };
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(data));
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(e) }));
+    }
+    return;
+  }
+
+  // POST /dashboard/action/configure-account
+  if (path === "/dashboard/action/configure-account" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = (form["a"] ?? "").trim();
+    const setting = (form["setting"] ?? "").trim();
+    const value   = form["value"] ?? "";
+    if (!account || !setting) {
+      res.writeHead(302, { "Location": "/dashboard?tab=inboxes" }); res.end(); return;
+    }
+    try {
+      await toolConfigureAccount({ account, setting: setting as Parameters<typeof toolConfigureAccount>[0]["setting"], value: value || undefined });
+      const ok = setting === "suspend" ? "Account suspended" : setting === "reactivate" ? "Account reactivated" : `${setting} updated`;
+      res.writeHead(302, { "Location": `/dashboard/account-settings?a=${encodeURIComponent(account)}&ok=${encodeURIComponent(ok)}` });
+    } catch (e) {
+      res.writeHead(302, { "Location": `/dashboard/account-settings?a=${encodeURIComponent(account)}&err=${encodeURIComponent(e instanceof Error ? e.message : String(e))}` });
+    }
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/create-folder
+  if (path === "/dashboard/action/create-folder" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = (form["a"] ?? "").trim();
+    const folderName = (form["folder_name"] ?? "").trim();
+    const parentFolder = (form["parent_folder"] ?? "").trim() || undefined;
+    if (!account || !folderName) { res.writeHead(302, { "Location": "/dashboard?tab=inboxes" }); res.end(); return; }
+    try {
+      await toolCreateFolder({ account, name: folderName, parent_folder: parentFolder });
+      res.writeHead(302, { "Location": `/dashboard/folders?a=${encodeURIComponent(account)}&ok=${encodeURIComponent(`Folder "${folderName}" created`)}` });
+    } catch (e) {
+      res.writeHead(302, { "Location": `/dashboard/folders?a=${encodeURIComponent(account)}&err=${encodeURIComponent(e instanceof Error ? e.message : String(e))}` });
+    }
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/rename-folder
+  if (path === "/dashboard/action/rename-folder" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = (form["a"] ?? "").trim();
+    const folder  = (form["folder"] ?? "").trim();
+    const newName = (form["new_name"] ?? "").trim();
+    if (!account || !folder || !newName) { res.writeHead(302, { "Location": "/dashboard?tab=inboxes" }); res.end(); return; }
+    try {
+      const client = new JmapClient(account);
+      await client.renameMailbox(folder, newName);
+      res.writeHead(302, { "Location": `/dashboard/folders?a=${encodeURIComponent(account)}&ok=${encodeURIComponent(`Folder renamed to "${newName}"`)}` });
+    } catch (e) {
+      res.writeHead(302, { "Location": `/dashboard/folders?a=${encodeURIComponent(account)}&err=${encodeURIComponent(e instanceof Error ? e.message : String(e))}` });
+    }
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/delete-folder
+  if (path === "/dashboard/action/delete-folder" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = (form["a"] ?? "").trim();
+    const folder  = (form["folder"] ?? "").trim();
+    if (!account || !folder) { res.writeHead(302, { "Location": "/dashboard?tab=inboxes" }); res.end(); return; }
+    try {
+      await toolDeleteFolder({ account, folder });
+      res.writeHead(302, { "Location": `/dashboard/folders?a=${encodeURIComponent(account)}&ok=${encodeURIComponent(`Folder "${folder}" deleted`)}` });
+    } catch (e) {
+      res.writeHead(302, { "Location": `/dashboard/folders?a=${encodeURIComponent(account)}&err=${encodeURIComponent(e instanceof Error ? e.message : String(e))}` });
+    }
+    res.end();
     return;
   }
 

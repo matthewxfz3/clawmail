@@ -60,7 +60,7 @@ import { toolListWhitelist, toolListBlacklist } from "./tools/filters.js";
 import { toolListFolders } from "./tools/folders.js";
 import { toolListLabels } from "./tools/labels.js";
 import { handleDashboard } from "./dashboard.js";
-import { recordCall, recordError, recordRateLimit, recordAccountCreated, recordAccountSend } from "./metrics.js";
+import { recordCall, recordError, recordRateLimit, recordAccountCreated, recordAccountSend, recordCallEntry, recordBatchSend } from "./metrics.js";
 
 // ---------------------------------------------------------------------------
 // Rate limiter — sliding window using timestamps per (apiKey, operation) key
@@ -111,11 +111,26 @@ function errContent(message: string) {
 }
 
 function rateLimitErr(tool: string) {
+  recordCallEntry({ ts: Date.now(), tool, account: "", durationMs: 0, status: "ratelimit" });
   return mcpError(
     "RATE_LIMIT",
     `Rate limit exceeded for tool "${tool}". Please try again later.`,
     true,
   );
+}
+
+/** Wraps an async tool call to record timing and error detail in the call log. */
+async function runTool<T>(toolName: string, account: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    recordCallEntry({ ts: start, tool: toolName, account, durationMs: Date.now() - start, status: "ok" });
+    return result;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    recordCallEntry({ ts: start, tool: toolName, account, durationMs: Date.now() - start, status: "error", errorMsg: msg });
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,9 +155,11 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("create_account");
       }
       try {
-        const result = await toolCreateAccount(args.local_part);
-        recordAccountCreated(result.email);
-        return okContent(result);
+        return await runTool("create_account", "", async () => {
+          const result = await toolCreateAccount(args.local_part);
+          recordAccountCreated(result.email);
+          return okContent(result);
+        });
       } catch (err) {
         recordError("create_account");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -162,8 +179,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("list_accounts");
       }
       try {
-        const result = await toolListAccounts();
-        return okContent(result);
+        return await runTool("list_accounts", "", () => toolListAccounts().then(okContent));
       } catch (err) {
         recordError("list_accounts");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -183,8 +199,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("delete_account");
       }
       try {
-        const result = await toolDeleteAccount(args.local_part);
-        return okContent(result);
+        return await runTool("delete_account", "", () => toolDeleteAccount(args.local_part).then(okContent));
       } catch (err) {
         recordError("delete_account");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -208,8 +223,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("list_emails");
       }
       try {
-        const result = await toolListEmails(args.account, args.folder, args.limit);
-        return okContent(result);
+        return await runTool("list_emails", args.account, () => toolListEmails(args.account, args.folder, args.limit).then(okContent));
       } catch (err) {
         recordError("list_emails");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -232,8 +246,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("read_email");
       }
       try {
-        const result = await toolReadEmail(args.account, args.email_id);
-        return okContent(result);
+        return await runTool("read_email", args.account, () => toolReadEmail(args.account, args.email_id).then(okContent));
       } catch (err) {
         recordError("read_email");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -257,8 +270,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("search_emails");
       }
       try {
-        const result = await toolSearchEmails(args.account, args.query, args.include_spam ?? false);
-        return okContent(result);
+        return await runTool("search_emails", args.account, () => toolSearchEmails(args.account, args.query, args.include_spam ?? false).then(okContent));
       } catch (err) {
         recordError("search_emails");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -289,21 +301,14 @@ function createMcpServer(apiKey: string): McpServer {
         recordRateLimit("send_email");
         return rateLimitErr("send_email");
       }
+      const sendEmailFrom = args.from_account.includes("@") ? args.from_account : `${args.from_account}@${config.domain}`;
       try {
-        const result = await toolSendEmail({
-          fromAccount: args.from_account,
-          to: args.to,
-          subject: args.subject,
-          body: args.body,
-          cc: args.cc,
-          bcc: args.bcc,
+        return await runTool("send_email", sendEmailFrom, async () => {
+          const result = await toolSendEmail({ fromAccount: args.from_account, to: args.to, subject: args.subject, body: args.body, cc: args.cc, bcc: args.bcc });
+          recordAccountSend(sendEmailFrom);
+          if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
+          return okContent(result);
         });
-        const fromEmail = args.from_account.includes("@")
-          ? args.from_account
-          : `${args.from_account}@${config.domain}`;
-        recordAccountSend(fromEmail);
-        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
-        return okContent(result);
       } catch (err) {
         recordError("send_email");
         return mcpCaughtError(err, "SEND_FAILED");
@@ -332,23 +337,13 @@ function createMcpServer(apiKey: string): McpServer {
         recordRateLimit("send_event_invite");
         return rateLimitErr("send_event_invite");
       }
+      const sendInviteFrom = args.from_account.includes("@") ? args.from_account : `${args.from_account}@${config.domain}`;
       try {
-        const result = await toolSendEventInvite({
-          fromAccount: args.from_account,
-          to: args.to,
-          title: args.title,
-          start: args.start,
-          end: args.end,
-          description: args.description,
-          location: args.location,
-          uid: args.uid,
-          video_url: args.video_url,
+        return await runTool("send_event_invite", sendInviteFrom, async () => {
+          const result = await toolSendEventInvite({ fromAccount: args.from_account, to: args.to, title: args.title, start: args.start, end: args.end, description: args.description, location: args.location, uid: args.uid, video_url: args.video_url });
+          recordAccountSend(sendInviteFrom);
+          return okContent(result);
         });
-        const fromEmail = args.from_account.includes("@")
-          ? args.from_account
-          : `${args.from_account}@${config.domain}`;
-        recordAccountSend(fromEmail);
-        return okContent(result);
       } catch (err) {
         recordError("send_event_invite");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -376,16 +371,8 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("cancel_event_invite");
       }
       try {
-        const result = await toolCancelEventInvite({
-          fromAccount: args.from_account,
-          to: args.to,
-          uid: args.uid,
-          title: args.title,
-          start: args.start,
-          end: args.end,
-          sequence: args.sequence,
-        });
-        return okContent(result);
+        return await runTool("cancel_event_invite", args.from_account, () =>
+          toolCancelEventInvite({ fromAccount: args.from_account, to: args.to, uid: args.uid, title: args.title, start: args.start, end: args.end, sequence: args.sequence }).then(okContent));
       } catch (err) {
         recordError("cancel_event_invite");
         return errContent(err instanceof Error ? err.message : String(err));
@@ -416,19 +403,14 @@ function createMcpServer(apiKey: string): McpServer {
         recordRateLimit("reply_to_email");
         return rateLimitErr("reply_to_email");
       }
+      const replyFrom = args.from_account.includes("@") ? args.from_account : `${args.from_account}@${config.domain}`;
       try {
-        const result = await toolReplyToEmail({
-          fromAccount: args.from_account,
-          email_id: args.email_id,
-          body: args.body,
-          reply_all: args.reply_all,
+        return await runTool("reply_to_email", replyFrom, async () => {
+          const result = await toolReplyToEmail({ fromAccount: args.from_account, email_id: args.email_id, body: args.body, reply_all: args.reply_all });
+          recordAccountSend(replyFrom);
+          if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
+          return okContent(result);
         });
-        const fromEmail = args.from_account.includes("@")
-          ? args.from_account
-          : `${args.from_account}@${config.domain}`;
-        recordAccountSend(fromEmail);
-        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
-        return okContent(result);
       } catch (err) {
         recordError("reply_to_email");
         return mcpCaughtError(err, "SEND_FAILED");
@@ -457,19 +439,14 @@ function createMcpServer(apiKey: string): McpServer {
         recordRateLimit("forward_email");
         return rateLimitErr("forward_email");
       }
+      const forwardFrom = args.from_account.includes("@") ? args.from_account : `${args.from_account}@${config.domain}`;
       try {
-        const result = await toolForwardEmail({
-          fromAccount: args.from_account,
-          email_id: args.email_id,
-          to: args.to,
-          body: args.body,
+        return await runTool("forward_email", forwardFrom, async () => {
+          const result = await toolForwardEmail({ fromAccount: args.from_account, email_id: args.email_id, to: args.to, body: args.body });
+          recordAccountSend(forwardFrom);
+          if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
+          return okContent(result);
         });
-        const fromEmail = args.from_account.includes("@")
-          ? args.from_account
-          : `${args.from_account}@${config.domain}`;
-        recordAccountSend(fromEmail);
-        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
-        return okContent(result);
       } catch (err) {
         recordError("forward_email");
         return mcpCaughtError(err, "SEND_FAILED");
@@ -509,41 +486,36 @@ function createMcpServer(apiKey: string): McpServer {
       }
 
       try {
-        if (isBulk) {
-          if (args.action === "move") {
-            return okContent(await toolBulkMoveEmails(args.account, ids, args.folder!));
+        return await runTool("update_email", args.account, async () => {
+          if (isBulk) {
+            if (args.action === "move")      return okContent(await toolBulkMoveEmails(args.account, ids, args.folder!));
+            if (args.action === "delete")    return okContent(await toolBulkDeleteEmails(args.account, ids));
+            if (args.action === "add_label") return okContent(await toolBulkAddLabel(args.account, ids, args.label!));
+            const results = await Promise.allSettled(ids.map(async (id) => {
+              if (args.action === "mark_read")    return toolMarkAsRead(args.account, id);
+              if (args.action === "mark_unread")  return toolMarkAsUnread(args.account, id);
+              if (args.action === "flag")         return toolFlagEmail(args.account, id, true);
+              if (args.action === "unflag")       return toolFlagEmail(args.account, id, false);
+              if (args.action === "archive")      return toolMoveEmail({ account: args.account, email_id: id, folder: "Archive" });
+              if (args.action === "remove_label") return toolRemoveLabel({ account: args.account, email_id: id, label: args.label! });
+            }));
+            const succeeded = results.filter((r) => r.status === "fulfilled").length;
+            const failed    = results.filter((r) => r.status === "rejected").length;
+            return okContent({ succeeded, failed, total: ids.length });
+          } else {
+            const id = ids[0];
+            if (args.action === "mark_read")    return okContent(await toolMarkAsRead(args.account, id));
+            if (args.action === "mark_unread")  return okContent(await toolMarkAsUnread(args.account, id));
+            if (args.action === "flag")         return okContent(await toolFlagEmail(args.account, id, true));
+            if (args.action === "unflag")       return okContent(await toolFlagEmail(args.account, id, false));
+            if (args.action === "archive")      return okContent(await toolMoveEmail({ account: args.account, email_id: id, folder: "Archive" }));
+            if (args.action === "move")         return okContent(await toolMoveEmail({ account: args.account, email_id: id, folder: args.folder! }));
+            if (args.action === "delete")       return okContent(await toolDeleteEmail(args.account, id));
+            if (args.action === "add_label")    return okContent(await toolAddLabel({ account: args.account, email_id: id, label: args.label! }));
+            if (args.action === "remove_label") return okContent(await toolRemoveLabel({ account: args.account, email_id: id, label: args.label! }));
+            return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
           }
-          if (args.action === "delete") {
-            return okContent(await toolBulkDeleteEmails(args.account, ids));
-          }
-          if (args.action === "add_label") {
-            return okContent(await toolBulkAddLabel(args.account, ids, args.label!));
-          }
-          // For bulk mark_read/unread/flag/unflag/remove_label, apply sequentially
-          const results = await Promise.allSettled(ids.map(async (id) => {
-            if (args.action === "mark_read")    return toolMarkAsRead(args.account, id);
-            if (args.action === "mark_unread")  return toolMarkAsUnread(args.account, id);
-            if (args.action === "flag")         return toolFlagEmail(args.account, id, true);
-            if (args.action === "unflag")       return toolFlagEmail(args.account, id, false);
-            if (args.action === "archive")      return toolMoveEmail({ account: args.account, email_id: id, folder: "Archive" });
-            if (args.action === "remove_label") return toolRemoveLabel({ account: args.account, email_id: id, label: args.label! });
-          }));
-          const succeeded = results.filter((r) => r.status === "fulfilled").length;
-          const failed    = results.filter((r) => r.status === "rejected").length;
-          return okContent({ succeeded, failed, total: ids.length });
-        } else {
-          const id = ids[0];
-          if (args.action === "mark_read")    return okContent(await toolMarkAsRead(args.account, id));
-          if (args.action === "mark_unread")  return okContent(await toolMarkAsUnread(args.account, id));
-          if (args.action === "flag")         return okContent(await toolFlagEmail(args.account, id, true));
-          if (args.action === "unflag")       return okContent(await toolFlagEmail(args.account, id, false));
-          if (args.action === "archive")      return okContent(await toolMoveEmail({ account: args.account, email_id: id, folder: "Archive" }));
-          if (args.action === "move")         return okContent(await toolMoveEmail({ account: args.account, email_id: id, folder: args.folder! }));
-          if (args.action === "delete")       return okContent(await toolDeleteEmail(args.account, id));
-          if (args.action === "add_label")    return okContent(await toolAddLabel({ account: args.account, email_id: id, label: args.label! }));
-          if (args.action === "remove_label") return okContent(await toolRemoveLabel({ account: args.account, email_id: id, label: args.label! }));
-          return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
-        }
+        });
       } catch (err) {
         recordError("update_email");
         return mcpCaughtError(err);
@@ -567,9 +539,11 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("classify_email");
       }
       try {
-        if (args.as === "spam")     return okContent(await toolMarkAsSpam({ account: args.account, email_id: args.email_id }));
-        if (args.as === "not_spam") return okContent(await toolMarkAsNotSpam({ account: args.account, email_id: args.email_id }));
-        return mcpError("VALIDATION_ERROR", `Unknown as value: ${args.as}`, false);
+        return await runTool("classify_email", args.account, async () => {
+          if (args.as === "spam")     return okContent(await toolMarkAsSpam({ account: args.account, email_id: args.email_id }));
+          if (args.as === "not_spam") return okContent(await toolMarkAsNotSpam({ account: args.account, email_id: args.email_id }));
+          return mcpError("VALIDATION_ERROR", `Unknown as value: ${args.as}`, false);
+        });
       } catch (err) {
         recordError("classify_email");
         return mcpCaughtError(err);
@@ -598,18 +572,16 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", "new_name is required for action='rename'", false);
       }
       try {
-        if (args.action === "create") {
-          return okContent(await toolCreateFolder({ account: args.account, name: args.folder, parent_folder: args.parent_folder }));
-        }
-        if (args.action === "delete") {
-          return okContent(await toolDeleteFolder({ account: args.account, folder: args.folder }));
-        }
-        if (args.action === "rename") {
-          const jmap = new JmapClient(args.account);
-          await jmap.renameMailbox(args.folder, args.new_name!);
-          return okContent({ message: `Folder "${args.folder}" renamed to "${args.new_name}"` });
-        }
-        return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
+        return await runTool("manage_folder", args.account, async () => {
+          if (args.action === "create") return okContent(await toolCreateFolder({ account: args.account, name: args.folder, parent_folder: args.parent_folder }));
+          if (args.action === "delete") return okContent(await toolDeleteFolder({ account: args.account, folder: args.folder }));
+          if (args.action === "rename") {
+            const jmap = new JmapClient(args.account);
+            await jmap.renameMailbox(args.folder, args.new_name!);
+            return okContent({ message: `Folder "${args.folder}" renamed to "${args.new_name}"` });
+          }
+          return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
+        });
       } catch (err) {
         recordError("manage_folder");
         return mcpCaughtError(err);
@@ -654,16 +626,12 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", "rule_id is required for action='delete'", false);
       }
       try {
-        if (args.action === "create") {
-          return okContent(await toolCreateRule({ account: args.account, name: args.name!, condition: args.condition!, action: args.rule_action! }));
-        }
-        if (args.action === "delete") {
-          return okContent(await toolDeleteRule({ account: args.account, rule_id: args.rule_id! }));
-        }
-        if (args.action === "apply") {
-          return okContent(await toolApplyRules({ account: args.account, folder: args.folder }));
-        }
-        return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
+        return await runTool("manage_rule", args.account, async () => {
+          if (args.action === "create") return okContent(await toolCreateRule({ account: args.account, name: args.name!, condition: args.condition!, action: args.rule_action! }));
+          if (args.action === "delete") return okContent(await toolDeleteRule({ account: args.account, rule_id: args.rule_id! }));
+          if (args.action === "apply")  return okContent(await toolApplyRules({ account: args.account, folder: args.folder }));
+          return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
+        });
       } catch (err) {
         recordError("manage_rule");
         return mcpCaughtError(err);
@@ -695,15 +663,17 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", "entry_id is required for action='remove'", false);
       }
       try {
-        if (args.list === "whitelist") {
-          if (args.action === "add")    return okContent(await toolAddToWhitelist({ account: args.account, address: args.address! }));
-          if (args.action === "remove") return okContent(await toolRemoveFromWhitelist({ account: args.account, entry_id: args.entry_id! }));
-        }
-        if (args.list === "blacklist") {
-          if (args.action === "add")    return okContent(await toolAddToBlacklist({ account: args.account, address: args.address! }));
-          if (args.action === "remove") return okContent(await toolRemoveFromBlacklist({ account: args.account, entry_id: args.entry_id! }));
-        }
-        return mcpError("VALIDATION_ERROR", `Unknown list/action combination: ${args.list}/${args.action}`, false);
+        return await runTool("manage_sender_list", args.account, async () => {
+          if (args.list === "whitelist") {
+            if (args.action === "add")    return okContent(await toolAddToWhitelist({ account: args.account, address: args.address! }));
+            if (args.action === "remove") return okContent(await toolRemoveFromWhitelist({ account: args.account, entry_id: args.entry_id! }));
+          }
+          if (args.list === "blacklist") {
+            if (args.action === "add")    return okContent(await toolAddToBlacklist({ account: args.account, address: args.address! }));
+            if (args.action === "remove") return okContent(await toolRemoveFromBlacklist({ account: args.account, entry_id: args.entry_id! }));
+          }
+          return mcpError("VALIDATION_ERROR", `Unknown list/action combination: ${args.list}/${args.action}`, false);
+        });
       } catch (err) {
         recordError("manage_sender_list");
         return mcpCaughtError(err);
@@ -740,16 +710,12 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", `event_id is required for action='${args.action}'`, false);
       }
       try {
-        if (args.action === "create") {
-          return okContent(await toolCreateEvent({ account: args.account, title: args.title!, start: args.start!, end: args.end!, description: args.description, attendees: args.attendees }));
-        }
-        if (args.action === "update") {
-          return okContent(await toolUpdateEvent({ account: args.account, event_id: args.event_id!, title: args.title, start: args.start, end: args.end, description: args.description, attendees: args.attendees }));
-        }
-        if (args.action === "delete") {
-          return okContent(await toolDeleteEvent({ account: args.account, event_id: args.event_id! }));
-        }
-        return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
+        return await runTool("manage_event", args.account, async () => {
+          if (args.action === "create") return okContent(await toolCreateEvent({ account: args.account, title: args.title!, start: args.start!, end: args.end!, description: args.description, attendees: args.attendees }));
+          if (args.action === "update") return okContent(await toolUpdateEvent({ account: args.account, event_id: args.event_id!, title: args.title, start: args.start, end: args.end, description: args.description, attendees: args.attendees }));
+          if (args.action === "delete") return okContent(await toolDeleteEvent({ account: args.account, event_id: args.event_id! }));
+          return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
+        });
       } catch (err) {
         recordError("manage_event");
         return mcpCaughtError(err);
@@ -778,16 +744,8 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("respond_to_invite");
       }
       try {
-        return okContent(await toolRespondToInvite({
-          fromAccount: args.from_account,
-          email_id:    args.email_id,
-          response:    args.response,
-          uid:         args.uid,
-          organizer:   args.organizer,
-          title:       args.title,
-          start:       args.start,
-          end:         args.end,
-        }));
+        return await runTool("respond_to_invite", args.from_account, () =>
+          toolRespondToInvite({ fromAccount: args.from_account, email_id: args.email_id, response: args.response, uid: args.uid, organizer: args.organizer, title: args.title, start: args.start, end: args.end }).then(okContent));
       } catch (err) {
         recordError("respond_to_invite");
         return mcpCaughtError(err, "SEND_FAILED");
@@ -814,7 +772,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("configure_account");
       }
       try {
-        return okContent(await toolConfigureAccount({ account: args.account, setting: args.setting, value: args.value }));
+        return await runTool("configure_account", args.account, () => toolConfigureAccount({ account: args.account, setting: args.setting, value: args.value }).then(okContent));
       } catch (err) {
         recordError("configure_account");
         return mcpCaughtError(err);
@@ -850,16 +808,8 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", "send_at is required for action='schedule'", false);
       }
       try {
-        return okContent(await toolManageDraft({
-          account: args.account,
-          action: args.action,
-          draft_id: args.draft_id,
-          subject: args.subject,
-          body: args.body,
-          to: args.to,
-          cc: args.cc,
-          send_at: args.send_at,
-        }));
+        return await runTool("manage_draft", args.account, () =>
+          toolManageDraft({ account: args.account, action: args.action, draft_id: args.draft_id, subject: args.subject, body: args.body, to: args.to, cc: args.cc, send_at: args.send_at }).then(okContent));
       } catch (err) {
         recordError("manage_draft");
         return mcpCaughtError(err, "DRAFT_ERROR");
@@ -887,9 +837,11 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", `label is required for action='${args.action}'`, false);
       }
       try {
-        const jmap = new JmapClient(args.account);
-        const result = await jmap.updateThread({ threadId: args.thread_id, action: args.action, label: args.label });
-        return okContent({ thread_id: args.thread_id, action: args.action, ...result });
+        return await runTool("update_thread", args.account, async () => {
+          const jmap = new JmapClient(args.account);
+          const result = await jmap.updateThread({ threadId: args.thread_id, action: args.action, label: args.label });
+          return okContent({ thread_id: args.thread_id, action: args.action, ...result });
+        });
       } catch (err) {
         recordError("update_thread");
         return mcpCaughtError(err);
@@ -917,15 +869,8 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("manage_contact");
       }
       try {
-        return okContent(await toolManageContact({
-          account: args.account,
-          action: args.action,
-          email: args.email,
-          name: args.name,
-          notes: args.notes,
-          vip: args.vip,
-          metadata: args.metadata,
-        }));
+        return await runTool("manage_contact", args.account, () =>
+          toolManageContact({ account: args.account, action: args.action, email: args.email, name: args.name, notes: args.notes, vip: args.vip, metadata: args.metadata }).then(okContent));
       } catch (err) {
         recordError("manage_contact");
         return mcpCaughtError(err);
@@ -953,15 +898,8 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("manage_template");
       }
       try {
-        return okContent(await toolManageTemplate({
-          account: args.account,
-          action: args.action,
-          template_id: args.template_id,
-          name: args.name,
-          subject: args.subject,
-          body: args.body,
-          variables: args.variables,
-        }));
+        return await runTool("manage_template", args.account, () =>
+          toolManageTemplate({ account: args.account, action: args.action, template_id: args.template_id, name: args.name, subject: args.subject, body: args.body, variables: args.variables }).then(okContent));
       } catch (err) {
         recordError("manage_template");
         return mcpCaughtError(err);
@@ -990,18 +928,15 @@ function createMcpServer(apiKey: string): McpServer {
         recordRateLimit("send_batch");
         return rateLimitErr("send_batch");
       }
+      const batchFrom = args.account.includes("@") ? args.account : `${args.account}@${config.domain}`;
       try {
-        const result = await toolSendBatch({
-          account: args.account,
-          template_id: args.template_id,
-          recipients: args.recipients,
-          variables: args.variables,
-          idempotency_key: args.idempotency_key,
+        return await runTool("send_batch", batchFrom, async () => {
+          const result = await toolSendBatch({ account: args.account, template_id: args.template_id, recipients: args.recipients, variables: args.variables, idempotency_key: args.idempotency_key });
+          recordAccountSend(batchFrom);
+          recordBatchSend({ ts: Date.now(), account: batchFrom, template_id: args.template_id, total: args.recipients.length, sent: result.sent, failed: result.failed, errors: result.errors.slice(0, 20) });
+          if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
+          return okContent(result);
         });
-        const fromEmail = args.account.includes("@") ? args.account : `${args.account}@${config.domain}`;
-        recordAccountSend(fromEmail);
-        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
-        return okContent(result);
       } catch (err) {
         recordError("send_batch");
         return mcpCaughtError(err, "SEND_FAILED");
@@ -1034,14 +969,8 @@ function createMcpServer(apiKey: string): McpServer {
         return mcpError("VALIDATION_ERROR", "webhook_id is required for action='unregister'", false);
       }
       try {
-        return okContent(await toolManageWebhook({
-          account: args.account,
-          action: args.action,
-          url: args.url,
-          events: args.events,
-          secret: args.secret,
-          webhook_id: args.webhook_id,
-        }));
+        return await runTool("manage_webhook", args.account, () =>
+          toolManageWebhook({ account: args.account, action: args.action, url: args.url, events: args.events, secret: args.secret, webhook_id: args.webhook_id }).then(okContent));
       } catch (err) {
         recordError("manage_webhook");
         return mcpCaughtError(err);
