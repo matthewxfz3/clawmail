@@ -1159,6 +1159,168 @@ export class JmapClient {
   // Public: create a mailbox, optionally nested under a parent
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // Public: apply an action to every email in a thread
+  // -------------------------------------------------------------------------
+
+  async updateThread(params: {
+    threadId: string;
+    action: "archive" | "delete" | "mute" | "add_label" | "remove_label";
+    label?: string;
+  }): Promise<{ affected: number }> {
+    const emails = await this.getThread(params.threadId);
+    if (emails.length === 0) return { affected: 0 };
+    const ids = emails.map((e) => e.id);
+
+    if (params.action === "archive") {
+      const result = await this.bulkMoveEmails(ids, "Archive");
+      return { affected: result.moved.length };
+    }
+    if (params.action === "delete") {
+      const result = await this.bulkDestroyEmails(ids);
+      return { affected: result.deleted.length };
+    }
+    if (params.action === "mute") {
+      const result = await this.bulkSetKeyword(ids, "$muted", true);
+      return { affected: result.updated.length };
+    }
+    if (params.action === "add_label") {
+      if (!params.label) throw new Error("label is required for action='add_label'");
+      const result = await this.bulkSetKeyword(ids, params.label, true);
+      return { affected: result.updated.length };
+    }
+    if (params.action === "remove_label") {
+      if (!params.label) throw new Error("label is required for action='remove_label'");
+      const result = await this.bulkSetKeyword(ids, params.label, false);
+      return { affected: result.updated.length };
+    }
+    throw new Error(`Unknown action: ${params.action}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: save a new draft to the Drafts mailbox
+  // -------------------------------------------------------------------------
+
+  async saveDraft(params: {
+    to?: string[];
+    cc?: string[];
+    subject?: string;
+    body?: string;
+  }): Promise<string> {
+    const accountId = await this.getAccountId();
+    const draftsId = await this.ensureMailbox("Drafts");
+    const now = new Date().toISOString();
+
+    const toAddresses = (params.to ?? []).map((a) => ({ email: a }));
+    const ccAddresses = (params.cc ?? []).map((a) => ({ email: a }));
+
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          create: {
+            draft1: {
+              mailboxIds: { [draftsId]: true },
+              keywords: { "$draft": true },
+              from: [{ email: this.email }],
+              ...(toAddresses.length > 0 ? { to: toAddresses } : {}),
+              ...(ccAddresses.length > 0 ? { cc: ccAddresses } : {}),
+              subject: params.subject ?? "",
+              sentAt: now,
+              bodyValues: {
+                body: { value: params.body ?? "", isEncodingProblem: false, isTruncated: false },
+              },
+              textBody: [{ partId: "body", type: "text/plain" }],
+            },
+          },
+        },
+        "ds1",
+      ],
+    ]);
+
+    const resp = responses.find(([, , id]) => id === "ds1");
+    const created = (resp?.[1] as { created?: Record<string, { id?: string }> })?.created;
+    const newId = created?.["draft1"]?.id;
+    if (!newId) {
+      const notCreated = (resp?.[1] as { notCreated?: Record<string, unknown> })?.notCreated;
+      throw new Error(`Failed to create draft: ${JSON.stringify(notCreated?.["draft1"] ?? "unknown")}`);
+    }
+    return newId;
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: update fields on an existing draft (destroy + recreate pattern)
+  // The caller is responsible for tracking the returned new ID.
+  // -------------------------------------------------------------------------
+
+  async updateDraft(
+    emailId: string,
+    patch: { to?: string[]; cc?: string[]; subject?: string; body?: string },
+  ): Promise<string> {
+    const accountId = await this.getAccountId();
+    const draftsId = await this.ensureMailbox("Drafts");
+
+    // Read current draft
+    const current = await this.getEmail(emailId);
+    const now = new Date().toISOString();
+
+    const toAddresses = (patch.to ?? current.to).map((a) => ({ email: a }));
+    const ccAddresses = (patch.cc ?? []).map((a) => ({ email: a }));
+    const subject = patch.subject ?? current.subject;
+    const body = patch.body ?? current.textBody ?? current.htmlBody ?? "";
+
+    // Destroy old + create new in one batch
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          destroy: [emailId],
+          create: {
+            draft1: {
+              mailboxIds: { [draftsId]: true },
+              keywords: { "$draft": true },
+              from: [{ email: this.email }],
+              ...(toAddresses.length > 0 ? { to: toAddresses } : {}),
+              ...(ccAddresses.length > 0 ? { cc: ccAddresses } : {}),
+              subject,
+              sentAt: now,
+              bodyValues: {
+                body: { value: body, isEncodingProblem: false, isTruncated: false },
+              },
+              textBody: [{ partId: "body", type: "text/plain" }],
+            },
+          },
+        },
+        "du1",
+      ],
+    ]);
+
+    const resp = responses.find(([, , id]) => id === "du1");
+    const created = (resp?.[1] as { created?: Record<string, { id?: string }> })?.created;
+    const newId = created?.["draft1"]?.id;
+    if (!newId) {
+      const notCreated = (resp?.[1] as { notCreated?: Record<string, unknown> })?.notCreated;
+      throw new Error(`Failed to update draft: ${JSON.stringify(notCreated?.["draft1"] ?? "unknown")}`);
+    }
+    return newId;
+  }
+
+  async renameMailbox(name: string, newName: string): Promise<void> {
+    const mailboxId = await this.getMailboxId(name);
+    if (mailboxId === null) throw new Error(`Mailbox not found: "${name}"`);
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      ["Mailbox/set", { accountId, update: { [mailboxId]: { name: newName } } }, "mbr1"],
+    ]);
+    const resp = responses.find(([, , id]) => id === "mbr1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated;
+    if (notUpdated?.[mailboxId]) {
+      throw new Error(`Failed to rename mailbox "${name}": ${JSON.stringify(notUpdated[mailboxId])}`);
+    }
+  }
+
   async createMailbox(name: string, parentName?: string): Promise<string> {
     const accountId = await this.getAccountId();
     let parentId: string | null = null;

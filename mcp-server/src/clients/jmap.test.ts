@@ -174,8 +174,17 @@ describe("JmapClient.deleteEmail", () => {
     global.fetch = vi.fn().mockImplementation(() => {
       call++;
       if (call === 1) return Promise.resolve(httpResponse(200, impersonateSession()));
-      // getMailboxId("Trash") → Mailbox/query
-      if (call === 2) return Promise.resolve(jmapResponse([["Mailbox/query", { ids: ["trash-id"] }, "mb1"]]));
+      // getMailboxIdByRole("trash") → Mailbox/get
+      if (call === 2)
+        return Promise.resolve(
+          jmapResponse([
+            [
+              "Mailbox/get",
+              { list: [{ id: "trash-id", name: "Trash", role: "trash", totalEmails: 0, unreadEmails: 0 }] },
+              "mbs",
+            ],
+          ]),
+        );
       // Email/set → success
       if (call === 3) return Promise.resolve(jmapResponse([["Email/set", { updated: { em1: {} }, notUpdated: {} }, "c1"]]));
       return Promise.resolve(jmapResponse([]));
@@ -190,7 +199,9 @@ describe("JmapClient.deleteEmail", () => {
     global.fetch = vi.fn().mockImplementation(() => {
       call++;
       if (call === 1) return Promise.resolve(httpResponse(200, impersonateSession()));
-      // Mailbox/query returns no ids
+      // getMailboxIdByRole("trash") → Mailbox/get returns empty list
+      if (call === 2) return Promise.resolve(jmapResponse([["Mailbox/get", { list: [] }, "mbs"]]));
+      // fallback getMailboxId("Trash") → Mailbox/query returns no ids
       return Promise.resolve(jmapResponse([["Mailbox/query", { ids: [] }, "mb1"]]));
     }) as typeof fetch;
 
@@ -203,7 +214,17 @@ describe("JmapClient.deleteEmail", () => {
     global.fetch = vi.fn().mockImplementation(() => {
       call++;
       if (call === 1) return Promise.resolve(httpResponse(200, impersonateSession()));
-      if (call === 2) return Promise.resolve(jmapResponse([["Mailbox/query", { ids: ["trash-id"] }, "mb1"]]));
+      // getMailboxIdByRole("trash") → Mailbox/get
+      if (call === 2)
+        return Promise.resolve(
+          jmapResponse([
+            [
+              "Mailbox/get",
+              { list: [{ id: "trash-id", name: "Trash", role: "trash", totalEmails: 0, unreadEmails: 0 }] },
+              "mbs",
+            ],
+          ]),
+        );
       return Promise.resolve(jmapResponse([["Email/set", { notUpdated: { em1: { type: "notFound" } } }, "c1"]]));
     }) as typeof fetch;
 

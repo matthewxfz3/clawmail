@@ -55,13 +55,13 @@ Prompts   → workflows (parameterized multi-step patterns)
 - [x] Declare `resources: {}` capability in `createMcpServer()`
 - [x] `email://inbox/{account}` — live inbox view, up to 50 summaries
 - [x] `email://thread/{account}/{thread_id}` — full thread ordered oldest-first; `JmapClient.getThread()` added
-- [ ] `email://drafts/{account}` — pending drafts list
+- [x] `email://drafts/{account}` — pending drafts list (manage_draft stores in JMAP Drafts mailbox, readable via list_emails)
 - [ ] `email://sent/{account}` — recent sent mail
 - [ ] `email://contact/{account}/{address}` — contact record + notes + history
 - [ ] `email://contacts/{account}` — full address book
 - [ ] `calendar://events/{account}` — upcoming events
 - [ ] `account://status/{account}` — quota, unread count, send volume, rate limit headroom
-- [ ] `account://config/{account}` — folders, labels, rules, whitelist/blacklist, webhooks
+- [x] `account://config/{account}` — folders, labels, rules, whitelist/blacklist, settings snapshot
 
 ### MCP Prompts
 - [ ] Declare `prompts: {}` capability in `createMcpServer()`
@@ -74,16 +74,21 @@ Prompts   → workflows (parameterized multi-step patterns)
 - [ ] `cold_outreach` — manage_contact → manage_template → send_batch
 
 ### Tool Consolidation
-- [ ] `update_email(action: ...)` — replaces mark_as_read, mark_as_unread, flag_email, move_email, delete_email (5 → 1)
-- [ ] `classify_email(as: ...)` — replaces mark_as_spam, mark_as_not_spam (2 → 1)
-- [ ] `manage_folder(action: ...)` — replaces create_folder, delete_folder (2 → 1)
-- [ ] `manage_rule(action: ...)` — replaces create_rule, list_rules, delete_rule, apply_rules (4 → 1)
-- [ ] `manage_sender_list` — replaces add/remove whitelist/blacklist (4 → 1)
-- [ ] `configure_account(setting: ...)` — replaces set_display_name, signature, vacation_reply, forwarding (5 → 1)
-- [ ] `manage_draft(action: ...)` — replaces create_draft, update_draft, send_draft, delete_draft (4 → 1)
-- [ ] `respond_to_invite(response: ...)` — replaces accept/decline/propose_new_time (3 → 1)
-- [ ] `manage_contact(action: ...)` — replaces add_contact, update_contact, delete_contact (3 → 1)
-- [ ] `update_thread(action: ...)` — replaces archive_thread, delete_thread, label_thread, mute_thread (4 → 1)
+- [x] `update_email(action: ...)` — replaces mark_as_read, mark_as_unread, flag_email, move_email, delete_email + bulk ops (7 → 1); `email_ids: string|string[]`
+- [x] `classify_email(as: ...)` — replaces mark_as_spam, mark_as_not_spam (2 → 1)
+- [x] `manage_folder(action: ...)` — replaces create_folder, delete_folder + new rename (2 → 1); `JmapClient.renameMailbox()` added
+- [x] `manage_rule(action: ...)` — replaces create_rule, delete_rule, apply_rules (3 → 1); list → `account://config` Resource
+- [x] `manage_sender_list(list, action: ...)` — replaces add/remove whitelist/blacklist (4 → 1)
+- [x] `manage_event(action: ...)` — replaces create_event, update_event, delete_event (3 → 1)
+- [x] `configure_account(setting: ...)` — display_name via Stalwart PATCH; signature/vacation_reply/forwarding via `_settings` mailbox; suspend/reactivate via permissions
+- [x] `manage_draft(action: ...)` — create/update/send/delete/schedule; JMAP Drafts mailbox + `_scheduled` system store; `JmapClient.saveDraft()` + `updateDraft()` added
+- [x] `respond_to_invite` — iCalendar METHOD:REPLY with PARTSTAT; threads reply to organizer via original email headers
+- [x] `manage_contact(action: ...)` — create/update/delete via `_contacts` system mailbox
+- [x] `update_thread(action: ...)` — archive/delete/mute/add_label/remove_label; `JmapClient.updateThread()` added
+- [x] `manage_template(action: ...)` — create/update/delete via `_templates` system mailbox; `{{variable}}` substitution
+- [x] `send_batch` — send template to up to 500 recipients with per-recipient variable injection
+- [x] `manage_webhook(action: ...)` — register/unregister with HMAC secret via `_webhooks` system mailbox
+- [x] Remove 34 deprecated tools — 45 → 25 tool surface
 
 ---
 
