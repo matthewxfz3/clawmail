@@ -1,17 +1,26 @@
 import { config } from "../config.js";
+import { readSecret } from "./secret-manager.js";
 
 const TOKEN_URL  = "https://oauth2.googleapis.com/token";
 const MEET_API   = "https://meet.googleapis.com/v2/spaces";
 const SCOPES     = "https://www.googleapis.com/auth/meetings.space.created";
 
-export function isMeetConfigured(): boolean {
-  const { clientId, clientSecret, refreshToken } = config.googleMeet;
+/** Resolve credentials: env var first, Secret Manager fallback. */
+async function resolveCreds(): Promise<{ clientId: string; clientSecret: string; refreshToken: string }> {
+  const clientId     = config.googleMeet.clientId     || await readSecret("google-meet-client-id")     || "";
+  const clientSecret = config.googleMeet.clientSecret || await readSecret("google-meet-client-secret") || "";
+  const refreshToken = config.googleMeet.refreshToken || await readSecret("google-meet-refresh-token") || "";
+  return { clientId, clientSecret, refreshToken };
+}
+
+export async function isMeetConfigured(): Promise<boolean> {
+  const { clientId, clientSecret, refreshToken } = await resolveCreds();
   return clientId.length > 0 && clientSecret.length > 0 && refreshToken.length > 0;
 }
 
 /** Exchange a refresh token for a fresh access token. */
 async function getAccessToken(): Promise<string> {
-  const { clientId, clientSecret, refreshToken } = config.googleMeet;
+  const { clientId, clientSecret, refreshToken } = await resolveCreds();
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
