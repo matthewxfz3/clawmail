@@ -30,6 +30,21 @@ import {
   toolDeleteRule,
   toolApplyRules,
 } from "./tools/rules.js";
+import {
+  toolAddToWhitelist,
+  toolRemoveFromWhitelist,
+  toolListWhitelist,
+  toolAddToBlacklist,
+  toolRemoveFromBlacklist,
+  toolListBlacklist,
+  toolApplySpamFilter,
+} from "./tools/filters.js";
+import {
+  toolAddLabel,
+  toolRemoveLabel,
+  toolListLabels,
+  toolSearchByLabel,
+} from "./tools/labels.js";
 import { handleDashboard } from "./dashboard.js";
 import { recordCall, recordError, recordRateLimit, recordAccountCreated, recordAccountSend } from "./metrics.js";
 
@@ -242,10 +257,11 @@ function createMcpServer(apiKey: string): McpServer {
   // Tool 7: search_emails
   server.tool(
     "search_emails",
-    "Full-text search across all emails for an account",
+    "Full-text search across all emails for an account. Excludes Junk/spam folder by default.",
     {
       account: z.string().describe("The full email address of the account"),
       query: z.string().describe("Search query string"),
+      include_spam: z.boolean().optional().describe("Include Junk/spam folder in results (default: false)"),
     },
     async (args) => {
       recordCall("search_emails");
@@ -254,7 +270,7 @@ function createMcpServer(apiKey: string): McpServer {
         return rateLimitErr("search_emails");
       }
       try {
-        const result = await toolSearchEmails(args.account, args.query);
+        const result = await toolSearchEmails(args.account, args.query, args.include_spam ?? false);
         return okContent(result);
       } catch (err) {
         recordError("search_emails");
@@ -682,6 +698,262 @@ function createMcpServer(apiKey: string): McpServer {
         return okContent(result);
       } catch (err) {
         recordError("cancel_event_invite");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Whitelist / Blacklist / Spam filter ─────────────────────────────────────
+
+  // Tool 23: add_to_whitelist
+  server.tool(
+    "add_to_whitelist",
+    "Add an email address or domain to the spam whitelist. Whitelisted senders are never moved to Junk by apply_spam_filter. Use @domain.com to whitelist an entire domain.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      address: z.string().describe("Email address (e.g. friend@example.com) or domain (e.g. @example.com) to whitelist"),
+    },
+    async (args) => {
+      recordCall("add_to_whitelist");
+      if (!checkRateLimit("add_to_whitelist", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("add_to_whitelist");
+        return rateLimitErr("add_to_whitelist");
+      }
+      try {
+        return okContent(await toolAddToWhitelist(args));
+      } catch (err) {
+        recordError("add_to_whitelist");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 24: remove_from_whitelist
+  server.tool(
+    "remove_from_whitelist",
+    "Remove an entry from the spam whitelist by entry ID",
+    {
+      account: z.string().describe("The full email address of the account"),
+      entry_id: z.string().describe("The entry ID from list_whitelist"),
+    },
+    async (args) => {
+      recordCall("remove_from_whitelist");
+      if (!checkRateLimit("remove_from_whitelist", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("remove_from_whitelist");
+        return rateLimitErr("remove_from_whitelist");
+      }
+      try {
+        return okContent(await toolRemoveFromWhitelist(args));
+      } catch (err) {
+        recordError("remove_from_whitelist");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 25: list_whitelist
+  server.tool(
+    "list_whitelist",
+    "List all whitelist entries for an account",
+    {
+      account: z.string().describe("The full email address of the account"),
+    },
+    async (args) => {
+      recordCall("list_whitelist");
+      if (!checkRateLimit("list_whitelist", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_whitelist");
+        return rateLimitErr("list_whitelist");
+      }
+      try {
+        return okContent(await toolListWhitelist(args));
+      } catch (err) {
+        recordError("list_whitelist");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 26: add_to_blacklist
+  server.tool(
+    "add_to_blacklist",
+    "Add an email address or domain to the spam blacklist. Blacklisted senders are immediately moved to Junk when apply_spam_filter is run. Use @domain.com to blacklist an entire domain.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      address: z.string().describe("Email address (e.g. spam@evil.com) or domain (e.g. @evil.com) to blacklist"),
+    },
+    async (args) => {
+      recordCall("add_to_blacklist");
+      if (!checkRateLimit("add_to_blacklist", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("add_to_blacklist");
+        return rateLimitErr("add_to_blacklist");
+      }
+      try {
+        return okContent(await toolAddToBlacklist(args));
+      } catch (err) {
+        recordError("add_to_blacklist");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 27: remove_from_blacklist
+  server.tool(
+    "remove_from_blacklist",
+    "Remove an entry from the spam blacklist by entry ID",
+    {
+      account: z.string().describe("The full email address of the account"),
+      entry_id: z.string().describe("The entry ID from list_blacklist"),
+    },
+    async (args) => {
+      recordCall("remove_from_blacklist");
+      if (!checkRateLimit("remove_from_blacklist", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("remove_from_blacklist");
+        return rateLimitErr("remove_from_blacklist");
+      }
+      try {
+        return okContent(await toolRemoveFromBlacklist(args));
+      } catch (err) {
+        recordError("remove_from_blacklist");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 28: list_blacklist
+  server.tool(
+    "list_blacklist",
+    "List all blacklist entries for an account",
+    {
+      account: z.string().describe("The full email address of the account"),
+    },
+    async (args) => {
+      recordCall("list_blacklist");
+      if (!checkRateLimit("list_blacklist", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_blacklist");
+        return rateLimitErr("list_blacklist");
+      }
+      try {
+        return okContent(await toolListBlacklist(args));
+      } catch (err) {
+        recordError("list_blacklist");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 29: apply_spam_filter
+  server.tool(
+    "apply_spam_filter",
+    "Scan a folder and move spam to Junk based on whitelist (skip), blacklist (always move), and heuristics (uppercase subject, repeated punctuation, spam keywords). Returns a summary of actions taken.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      folder: z.string().optional().describe("Folder to scan (default: Inbox)"),
+    },
+    async (args) => {
+      recordCall("apply_spam_filter");
+      if (!checkRateLimit("apply_spam_filter", apiKey, 20, 60 * 1000)) {
+        recordRateLimit("apply_spam_filter");
+        return rateLimitErr("apply_spam_filter");
+      }
+      try {
+        return okContent(await toolApplySpamFilter(args));
+      } catch (err) {
+        recordError("apply_spam_filter");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Labels ───────────────────────────────────────────────────────────────────
+
+  // Tool 30: add_label
+  server.tool(
+    "add_label",
+    "Add a custom label (JMAP keyword) to an email for indexing and retrieval. Labels persist on the email and can be searched with search_by_label.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID"),
+      label: z.string().describe("Label name (alphanumeric, hyphens, underscores only — e.g. 'invoice', 'follow-up', 'urgent')"),
+    },
+    async (args) => {
+      recordCall("add_label");
+      if (!checkRateLimit("add_label", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("add_label");
+        return rateLimitErr("add_label");
+      }
+      try {
+        return okContent(await toolAddLabel(args));
+      } catch (err) {
+        recordError("add_label");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 31: remove_label
+  server.tool(
+    "remove_label",
+    "Remove a custom label from an email",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID"),
+      label: z.string().describe("Label name to remove"),
+    },
+    async (args) => {
+      recordCall("remove_label");
+      if (!checkRateLimit("remove_label", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("remove_label");
+        return rateLimitErr("remove_label");
+      }
+      try {
+        return okContent(await toolRemoveLabel(args));
+      } catch (err) {
+        recordError("remove_label");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 32: list_labels
+  server.tool(
+    "list_labels",
+    "List all unique custom labels in use across an account's emails (scans up to 500 most recent emails)",
+    {
+      account: z.string().describe("The full email address of the account"),
+    },
+    async (args) => {
+      recordCall("list_labels");
+      if (!checkRateLimit("list_labels", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_labels");
+        return rateLimitErr("list_labels");
+      }
+      try {
+        return okContent(await toolListLabels(args));
+      } catch (err) {
+        recordError("list_labels");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 33: search_by_label
+  server.tool(
+    "search_by_label",
+    "Find all emails that have a specific label applied",
+    {
+      account: z.string().describe("The full email address of the account"),
+      label: z.string().describe("Label name to search for"),
+    },
+    async (args) => {
+      recordCall("search_by_label");
+      if (!checkRateLimit("search_by_label", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("search_by_label");
+        return rateLimitErr("search_by_label");
+      }
+      try {
+        return okContent(await toolSearchByLabel(args));
+      } catch (err) {
+        recordError("search_by_label");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },

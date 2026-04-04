@@ -574,14 +574,21 @@ export class JmapClient {
   // Public: search emails
   // -------------------------------------------------------------------------
 
-  async searchEmails(query: string): Promise<EmailSummary[]> {
+  async searchEmails(
+    query: string,
+    opts?: { excludeMailboxes?: string[] },
+  ): Promise<EmailSummary[]> {
     const accountId = await this.getAccountId();
+    const filter: Record<string, unknown> = { text: query };
+    if (opts?.excludeMailboxes && opts.excludeMailboxes.length > 0) {
+      filter["inMailboxOtherThan"] = opts.excludeMailboxes;
+    }
     const responses = await this.request([
       [
         "Email/query",
         {
           accountId,
-          filter: { text: query },
+          filter,
           sort: [{ property: "receivedAt", isAscending: false }],
           limit: 50,
         },
@@ -616,6 +623,120 @@ export class JmapClient {
 
     const list = (getResponse[1] as { list?: Record<string, unknown>[] }).list ?? [];
     return list.map(rawToSummary);
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: resolve a mailbox name to its JMAP ID (exposed for tools)
+  // -------------------------------------------------------------------------
+
+  async resolveMailboxId(name: string): Promise<string | null> {
+    return this.getMailboxId(name);
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: set or clear a custom keyword (label) on an email
+  // value=true adds the keyword, value=false removes it (sets to null in patch)
+  // -------------------------------------------------------------------------
+
+  async setEmailKeyword(emailId: string, keyword: string, value: boolean): Promise<void> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Email/set",
+        {
+          accountId,
+          update: { [emailId]: { [`keywords/${keyword}`]: value ? true : null } },
+        },
+        "kw1",
+      ],
+    ]);
+    const resp = responses.find(([, , id]) => id === "kw1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated;
+    if (notUpdated?.[emailId]) {
+      throw new Error(`setEmailKeyword failed for ${emailId}: ${JSON.stringify(notUpdated[emailId])}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: return the custom (non-system) keywords on a single email
+  // -------------------------------------------------------------------------
+
+  async getEmailKeywords(emailId: string): Promise<string[]> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      ["Email/get", { accountId, ids: [emailId], properties: ["keywords"] }, "gk1"],
+    ]);
+    const resp = responses.find(([, , id]) => id === "gk1");
+    const list = (resp?.[1] as { list?: Array<Record<string, unknown>> })?.list ?? [];
+    if (list.length === 0) throw new Error(`Email not found: ${emailId}`);
+    const keywords = list[0]["keywords"];
+    if (!keywords || typeof keywords !== "object") return [];
+    return Object.keys(keywords as Record<string, unknown>).filter((k) => !k.startsWith("$"));
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: search emails by JMAP keyword (label)
+  // -------------------------------------------------------------------------
+
+  async searchByKeyword(keyword: string): Promise<EmailSummary[]> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Email/query",
+        {
+          accountId,
+          filter: { hasKeyword: keyword },
+          sort: [{ property: "receivedAt", isAscending: false }],
+          limit: 200,
+        },
+        "kq1",
+      ],
+      [
+        "Email/get",
+        {
+          accountId,
+          "#ids": { resultOf: "kq1", name: "Email/query", path: "/ids" },
+          properties: ["id", "subject", "from", "to", "receivedAt", "hasAttachment", "preview", "mailboxIds"],
+        },
+        "kg1",
+      ],
+    ]);
+    const getResponse = responses.find(([, , id]) => id === "kg1");
+    const list = (getResponse?.[1] as { list?: Record<string, unknown>[] })?.list ?? [];
+    return list.map(rawToSummary);
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: fetch emails with their custom keyword lists (for label inventory)
+  // -------------------------------------------------------------------------
+
+  async listEmailsWithKeywords(limit = 500): Promise<Array<{ id: string; keywords: string[] }>> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Email/query",
+        { accountId, sort: [{ property: "receivedAt", isAscending: false }], limit },
+        "lkq1",
+      ],
+      [
+        "Email/get",
+        {
+          accountId,
+          "#ids": { resultOf: "lkq1", name: "Email/query", path: "/ids" },
+          properties: ["id", "keywords"],
+        },
+        "lkg1",
+      ],
+    ]);
+    const getResponse = responses.find(([, , id]) => id === "lkg1");
+    const list = (getResponse?.[1] as { list?: Record<string, unknown>[] })?.list ?? [];
+    return list.map((item) => {
+      const kws = item["keywords"];
+      const keys = kws && typeof kws === "object"
+        ? Object.keys(kws as Record<string, unknown>).filter((k) => !k.startsWith("$"))
+        : [];
+      return { id: String(item["id"] ?? ""), keywords: keys };
+    });
   }
 
   // -------------------------------------------------------------------------

@@ -66,9 +66,15 @@ export async function toolDeleteEmail(
 export async function toolSearchEmails(
   account: string,
   query: string,
+  includeSpam = false,
 ): Promise<{ emails: EmailSummary[]; count: number; query: string }> {
   const client = buildClient(account);
-  const emails = await client.searchEmails(query);
+  let excludeMailboxes: string[] | undefined;
+  if (!includeSpam) {
+    const junkId = await client.resolveMailboxId("Junk");
+    if (junkId !== null) excludeMailboxes = [junkId];
+  }
+  const emails = await client.searchEmails(query, { excludeMailboxes });
   return {
     emails,
     count: emails.length,
