@@ -40,6 +40,53 @@ Prompts   → workflows (parameterized multi-step patterns)
 
 ---
 
+## Implementation Todo
+
+### P0 — Correctness Fixes
+- [x] Structured error envelopes — `{ ok, error: { code, message, retryable } }` on all tools (`lib/errors.ts`)
+- [x] Idempotency keys — `idempotency_key` param on `send_email`, `reply_to_email`, `forward_email`; 24h in-memory TTL store (`lib/idempotency.ts`)
+- [x] `REDIS_URL` config wired — ready for distributed rate limiter when Memorystore is provisioned
+- [ ] Distributed rate limiter — replace in-memory `Map` in `index.ts:67` with Redis sliding window (requires `ioredis` + `REDIS_URL`)
+- [ ] `list_emails` fields param — add `fields` param to trim response to `id,subject,from,date,is_read` by default
+- [ ] Auto-apply rules on inbound — move `apply_rules` trigger server-side; tool becomes "apply to historical mail" only
+- [ ] `normalizeError()` across all tool `catch` blocks — currently still using `errContent(err.message)` in most tools
+
+### MCP Resources
+- [x] Declare `resources: {}` capability in `createMcpServer()`
+- [x] `email://inbox/{account}` — live inbox view, up to 50 summaries
+- [x] `email://thread/{account}/{thread_id}` — full thread ordered oldest-first; `JmapClient.getThread()` added
+- [ ] `email://drafts/{account}` — pending drafts list
+- [ ] `email://sent/{account}` — recent sent mail
+- [ ] `email://contact/{account}/{address}` — contact record + notes + history
+- [ ] `email://contacts/{account}` — full address book
+- [ ] `calendar://events/{account}` — upcoming events
+- [ ] `account://status/{account}` — quota, unread count, send volume, rate limit headroom
+- [ ] `account://config/{account}` — folders, labels, rules, whitelist/blacklist, webhooks
+
+### MCP Prompts
+- [ ] Declare `prompts: {}` capability in `createMcpServer()`
+- [ ] `triage_inbox` — inbox resource → classify × N → rank → return
+- [ ] `draft_reply` — thread resource → compose → manage_draft
+- [ ] `summarize_thread` — thread resource → compress → return
+- [ ] `schedule_meeting` — check_availability × N → find slot → draft invite
+- [ ] `onboard_persona` — create_account → configure_account × 3
+- [ ] `process_inbox` — apply rules → sender list → digest
+- [ ] `cold_outreach` — manage_contact → manage_template → send_batch
+
+### Tool Consolidation
+- [ ] `update_email(action: ...)` — replaces mark_as_read, mark_as_unread, flag_email, move_email, delete_email (5 → 1)
+- [ ] `classify_email(as: ...)` — replaces mark_as_spam, mark_as_not_spam (2 → 1)
+- [ ] `manage_folder(action: ...)` — replaces create_folder, delete_folder (2 → 1)
+- [ ] `manage_rule(action: ...)` — replaces create_rule, list_rules, delete_rule, apply_rules (4 → 1)
+- [ ] `manage_sender_list` — replaces add/remove whitelist/blacklist (4 → 1)
+- [ ] `configure_account(setting: ...)` — replaces set_display_name, signature, vacation_reply, forwarding (5 → 1)
+- [ ] `manage_draft(action: ...)` — replaces create_draft, update_draft, send_draft, delete_draft (4 → 1)
+- [ ] `respond_to_invite(response: ...)` — replaces accept/decline/propose_new_time (3 → 1)
+- [ ] `manage_contact(action: ...)` — replaces add_contact, update_contact, delete_contact (3 → 1)
+- [ ] `update_thread(action: ...)` — replaces archive_thread, delete_thread, label_thread, mute_thread (4 → 1)
+
+---
+
 ## P0 — Fix Before Building
 
 > Correctness bugs in current code. Undermine every other tool. Fix first.
