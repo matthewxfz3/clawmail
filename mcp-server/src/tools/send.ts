@@ -320,6 +320,111 @@ export async function toolForwardEmail(
 }
 
 // ---------------------------------------------------------------------------
+// Tool: respond_to_invite
+// ---------------------------------------------------------------------------
+
+export interface RespondToInviteParams {
+  fromAccount: string;
+  /** JMAP email ID of the original invite — used for threading headers */
+  email_id: string;
+  response: "accept" | "decline" | "tentative";
+  uid: string;
+  /** Email address of the event organizer (reply-to target) */
+  organizer: string;
+  title: string;
+  start: string;
+  end: string;
+}
+
+export async function toolRespondToInvite(
+  params: RespondToInviteParams,
+): Promise<{ message: string; responded_at: string }> {
+  const { fromAccount, email_id, response, uid, organizer, title, start, end } = params;
+
+  const fromEmail = fromAccount.includes("@")
+    ? fromAccount
+    : `${fromAccount}@${config.domain}`;
+
+  if (!isValidEmail(fromEmail)) throw new Error(`Invalid from_account: "${fromAccount}"`);
+
+  const domain = fromEmail.split("@")[1];
+  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+    throw new Error(`from_account must belong to the configured domain "${config.domain}"`);
+  }
+
+  if (!isValidEmail(organizer)) throw new Error(`Invalid organizer email: "${organizer}"`);
+  if (!uid.trim()) throw new Error("uid is required");
+  if (!title.trim()) throw new Error("title must not be empty");
+
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (isNaN(startMs)) throw new Error(`start is not a valid ISO 8601 date-time: "${start}"`);
+  if (isNaN(endMs))   throw new Error(`end is not a valid ISO 8601 date-time: "${end}"`);
+
+  // Fetch original invite email for threading headers
+  const client = new JmapClient(fromEmail);
+  const originalEmail = await client.getEmail(email_id);
+  const msgId = originalEmail.headers["Message-ID"];
+  const refs  = originalEmail.headers["References"];
+  const newRefs = [refs, msgId].filter(Boolean).join(" ");
+
+  const partstat = response === "accept" ? "ACCEPTED"
+    : response === "decline" ? "DECLINED"
+    : "TENTATIVE";
+
+  const respondedAt = new Date().toISOString();
+
+  const icsLines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Clawmail//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REPLY",
+    "BEGIN:VEVENT",
+    foldLine(`UID:${uid}`),
+    foldLine(`DTSTART:${toICalDate(start)}`),
+    foldLine(`DTEND:${toICalDate(end)}`),
+    foldLine(`DTSTAMP:${toICalDate(respondedAt)}`),
+    foldLine(`SUMMARY:${icalEscape(title)}`),
+    foldLine(`ORGANIZER;CN=${icalEscape(organizer)}:mailto:${organizer}`),
+    foldLine(`ATTENDEE;PARTSTAT=${partstat};CN=${icalEscape(fromEmail)}:mailto:${fromEmail}`),
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  const icsContent = icsLines.join("\r\n");
+
+  const subjectPrefix = response === "accept" ? "Accepted" : response === "decline" ? "Declined" : "Tentative";
+  const textBody = `${subjectPrefix}: ${title}`;
+
+  await getTransporter().sendMail({
+    from: fromEmail,
+    to: organizer,
+    subject: `${subjectPrefix}: ${title}`,
+    text: textBody,
+    headers: {
+      ...(msgId ? { "In-Reply-To": msgId } : {}),
+      ...(newRefs ? { References: newRefs } : {}),
+    },
+    icalEvent: {
+      method: "REPLY",
+      content: icsContent,
+    },
+    attachments: [
+      {
+        filename: "reply.ics",
+        content: icsContent,
+        contentType: "application/ics",
+      },
+    ],
+  });
+
+  return {
+    message: `${subjectPrefix} invite "${title}" from ${fromEmail} to organizer ${organizer}`,
+    responded_at: respondedAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // iCalendar helpers (RFC 5545)
 // ---------------------------------------------------------------------------
 

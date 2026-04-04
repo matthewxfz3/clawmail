@@ -165,6 +165,25 @@ export async function listAccounts(): Promise<
 }
 
 /**
+ * Patch fields on an existing principal using Stalwart's PATCH endpoint.
+ * Each operation is one of: { action: "set"|"addItem"|"removeItem", field, value }
+ */
+export async function patchAccount(
+  localPart: string,
+  operations: Array<{ action: "set" | "addItem" | "removeItem"; field: string; value: unknown }>,
+): Promise<void> {
+  const res = await stalwartFetch(`/api/principal/${encodeURIComponent(localPart)}`, {
+    method: "PATCH",
+    body: JSON.stringify(operations),
+  });
+  await assertOk(res, `patchAccount(${localPart})`);
+  const json: unknown = await res.json().catch(() => null);
+  if (json !== null && typeof json === "object" && "error" in json) {
+    throw new Error(`Stalwart error patching account: ${JSON.stringify(json)}`);
+  }
+}
+
+/**
  * Return true if an account with the given localPart exists.
  * Stalwart returns HTTP 200 with {"error":"notFound"} for missing principals.
  */
