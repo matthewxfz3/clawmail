@@ -57,6 +57,8 @@ vi.mock("../metrics.js", () => ({
   recordRateLimit: vi.fn(),
   recordAccountCreated: vi.fn(),
   recordAccountSend: vi.fn(),
+  recordCallEntry: vi.fn(),
+  recordBatchSend: vi.fn(),
   getMetrics: vi.fn(() => ({
     startedAt: 0, tools: {}, totalRequests: 0, totalErrors: 0,
     totalRateLimitHits: 0, inboxTotal: 0,

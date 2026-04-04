@@ -129,3 +129,58 @@ export function getMetrics(): Readonly<MetricsStore> {
 export function getSamples(): ReadonlyArray<MetricsSample> {
   return samples;
 }
+
+// ---------------------------------------------------------------------------
+// Tool call log — ring buffer of last 200 entries (newest at end)
+// ---------------------------------------------------------------------------
+
+export interface ToolCallEntry {
+  ts: number;
+  tool: string;
+  account: string;
+  durationMs: number;
+  status: "ok" | "error" | "ratelimit";
+  errorMsg?: string;
+}
+
+const CALL_LOG_MAX = 200;
+const callLog: ToolCallEntry[] = [];
+
+export function recordCallEntry(entry: ToolCallEntry): void {
+  callLog.push(entry);
+  if (callLog.length > CALL_LOG_MAX) callLog.splice(0, callLog.length - CALL_LOG_MAX);
+}
+
+export function getCallLog(): ReadonlyArray<ToolCallEntry> {
+  return callLog;
+}
+
+export function getRecentErrors(): ReadonlyArray<ToolCallEntry> {
+  return callLog.filter((e) => e.status === "error").slice(-50).reverse();
+}
+
+// ---------------------------------------------------------------------------
+// Batch send log — ring buffer of last 20 entries
+// ---------------------------------------------------------------------------
+
+export interface BatchSendEntry {
+  ts: number;
+  account: string;
+  template_id: string;
+  total: number;
+  sent: number;
+  failed: number;
+  errors: string[];
+}
+
+const BATCH_LOG_MAX = 20;
+const batchLog: BatchSendEntry[] = [];
+
+export function recordBatchSend(entry: BatchSendEntry): void {
+  batchLog.push(entry);
+  if (batchLog.length > BATCH_LOG_MAX) batchLog.splice(0, batchLog.length - BATCH_LOG_MAX);
+}
+
+export function getBatchLog(): ReadonlyArray<BatchSendEntry> {
+  return batchLog;
+}
