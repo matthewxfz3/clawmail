@@ -365,6 +365,14 @@ export class JmapClient {
     return ids.length > 0 ? ids[0] : null;
   }
 
+  /** Find a mailbox by its JMAP role (e.g. "trash", "junk", "sent", "inbox").
+   *  More reliable than name-based lookup since folder names vary by mail client. */
+  private async getMailboxIdByRole(role: string): Promise<string | null> {
+    const mailboxes = await this.listMailboxes();
+    const found = mailboxes.find((m) => m.role.toLowerCase() === role.toLowerCase());
+    return found ? found.id : null;
+  }
+
   // -------------------------------------------------------------------------
   // Public: list all mailboxes with their totalEmails count (single request)
   // -------------------------------------------------------------------------
@@ -535,7 +543,7 @@ export class JmapClient {
 
   async deleteEmail(emailId: string): Promise<void> {
     const accountId = await this.getAccountId();
-    const trashId = await this.getMailboxId("Trash");
+    const trashId = await this.getMailboxIdByRole("trash") ?? await this.getMailboxId("Trash");
     if (trashId === null) {
       throw new Error('Could not locate "Trash" mailbox for account: ' + this.email);
     }
@@ -958,7 +966,7 @@ export class JmapClient {
     sentAt: string;
   }): Promise<void> {
     const accountId = await this.getAccountId();
-    const sentId = await this.getMailboxId("Sent");
+    const sentId = await this.getMailboxIdByRole("sent") ?? await this.getMailboxId("Sent");
     if (sentId === null) {
       // Sent folder doesn't exist — skip silently rather than failing the send
       console.warn(`[jmap] saveToSent: no Sent mailbox found for ${this.email}`);
@@ -998,6 +1006,130 @@ export class JmapClient {
     if (notCreated?.["sent1"]) {
       console.warn(`[jmap] saveToSent failed for ${this.email}:`, JSON.stringify(notCreated["sent1"]));
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: bulk move multiple emails to a folder in one JMAP call
+  // -------------------------------------------------------------------------
+
+  async bulkMoveEmails(emailIds: string[], targetFolder: string): Promise<{ moved: string[]; failed: string[] }> {
+    if (emailIds.length === 0) return { moved: [], failed: [] };
+    const accountId = await this.getAccountId();
+    const targetId = await this.getMailboxId(targetFolder);
+    if (targetId === null) throw new Error(`Mailbox not found: "${targetFolder}"`);
+
+    const update: Record<string, unknown> = {};
+    for (const id of emailIds) {
+      update[id] = { mailboxIds: { [targetId]: true } };
+    }
+
+    const responses = await this.request([
+      ["Email/set", { accountId, update }, "bm1"],
+    ]);
+    const resp = responses.find(([, , id]) => id === "bm1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated ?? {};
+    const failed = Object.keys(notUpdated);
+    const moved = emailIds.filter((id) => !failed.includes(id));
+    return { moved, failed };
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: bulk destroy (trash) multiple emails in one JMAP call
+  // -------------------------------------------------------------------------
+
+  async bulkDestroyEmails(emailIds: string[]): Promise<{ deleted: string[]; failed: string[] }> {
+    if (emailIds.length === 0) return { deleted: [], failed: [] };
+    const accountId = await this.getAccountId();
+    const trashId = await this.getMailboxIdByRole("trash") ?? await this.getMailboxId("Trash");
+    if (trashId === null) throw new Error("Trash mailbox not found");
+
+    const update: Record<string, unknown> = {};
+    for (const id of emailIds) {
+      update[id] = { mailboxIds: { [trashId]: true } };
+    }
+
+    const responses = await this.request([
+      ["Email/set", { accountId, update }, "bd1"],
+    ]);
+    const resp = responses.find(([, , id]) => id === "bd1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated ?? {};
+    const failed = Object.keys(notUpdated);
+    const deleted = emailIds.filter((id) => !failed.includes(id));
+    return { deleted, failed };
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: bulk set/clear a keyword on multiple emails in one JMAP call
+  // -------------------------------------------------------------------------
+
+  async bulkSetKeyword(emailIds: string[], keyword: string, value: boolean): Promise<{ updated: string[]; failed: string[] }> {
+    if (emailIds.length === 0) return { updated: [], failed: [] };
+    const accountId = await this.getAccountId();
+
+    const update: Record<string, unknown> = {};
+    for (const id of emailIds) {
+      update[id] = { [`keywords/${keyword}`]: value ? true : null };
+    }
+
+    const responses = await this.request([
+      ["Email/set", { accountId, update }, "bk1"],
+    ]);
+    const resp = responses.find(([, , id]) => id === "bk1");
+    const notUpdated = (resp?.[1] as { notUpdated?: Record<string, unknown> })?.notUpdated ?? {};
+    const failed = Object.keys(notUpdated);
+    const updated = emailIds.filter((id) => !failed.includes(id));
+    return { updated, failed };
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: delete a mailbox by name
+  // -------------------------------------------------------------------------
+
+  async deleteMailbox(name: string): Promise<void> {
+    const mailboxId = await this.getMailboxId(name);
+    if (mailboxId === null) throw new Error(`Mailbox not found: "${name}"`);
+
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      ["Mailbox/set", { accountId, destroy: [mailboxId] }, "mbd1"],
+    ]);
+    const resp = responses.find(([, , id]) => id === "mbd1");
+    const notDestroyed = (resp?.[1] as { notDestroyed?: Record<string, unknown> })?.notDestroyed;
+    if (notDestroyed?.[mailboxId]) {
+      throw new Error(`Failed to delete mailbox "${name}": ${JSON.stringify(notDestroyed[mailboxId])}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: create a mailbox, optionally nested under a parent
+  // -------------------------------------------------------------------------
+
+  async createMailbox(name: string, parentName?: string): Promise<string> {
+    const accountId = await this.getAccountId();
+    let parentId: string | null = null;
+    if (parentName) {
+      parentId = await this.getMailboxId(parentName);
+      if (parentId === null) throw new Error(`Parent folder not found: "${parentName}"`);
+    }
+
+    const responses = await this.request([
+      [
+        "Mailbox/set",
+        {
+          accountId,
+          create: { mbc1: { name, parentId } },
+        },
+        "mbc1",
+      ],
+    ]);
+    const resp = responses.find(([, , id]) => id === "mbc1");
+    const created = (resp?.[1] as { created?: Record<string, { id?: string }> })?.created;
+    const newId = created?.["mbc1"]?.id;
+    if (!newId) {
+      const notCreated = (resp?.[1] as { notCreated?: Record<string, unknown> })?.notCreated;
+      throw new Error(`Failed to create folder "${name}": ${JSON.stringify(notCreated?.["mbc1"] ?? "unknown error")}`);
+    }
+    return newId;
   }
 }
 

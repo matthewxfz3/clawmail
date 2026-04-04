@@ -150,6 +150,176 @@ export async function toolSendEmail(
 }
 
 // ---------------------------------------------------------------------------
+// Tool: reply_to_email
+// ---------------------------------------------------------------------------
+
+export interface ReplyToEmailParams {
+  fromAccount: string;
+  email_id: string;
+  body: string;
+  /** If true, reply to all original recipients (To + CC), not just the sender */
+  reply_all?: boolean;
+}
+
+export async function toolReplyToEmail(
+  params: ReplyToEmailParams,
+): Promise<{ message: string; queued_at: string }> {
+  const fromEmail = params.fromAccount.includes("@")
+    ? params.fromAccount
+    : `${params.fromAccount}@${config.domain}`;
+
+  if (!isValidEmail(fromEmail)) throw new Error(`Invalid from_account: "${params.fromAccount}"`);
+
+  const domain = fromEmail.split("@")[1];
+  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+    throw new Error(`from_account must belong to the configured domain "${config.domain}"`);
+  }
+
+  const client = new JmapClient(fromEmail);
+  const original = await client.getEmail(params.email_id);
+
+  // Extract original sender address (strip display name)
+  const replyToAddr = original.headers["Reply-To"] ?? original.from;
+  const toList = [replyToAddr.match(/<([^>]+)>/)?.[1] ?? replyToAddr.trim()];
+
+  let cc: string[] = [];
+  if (params.reply_all) {
+    const originalCc = original.headers["Cc"] ?? "";
+    const ccAddresses = originalCc
+      .split(",")
+      .map((a) => a.match(/<([^>]+)>/)?.[1] ?? a.trim())
+      .filter(Boolean);
+    // Add original To recipients except self
+    const allOthers = [...original.to, ...ccAddresses].filter(
+      (a) => a.toLowerCase() !== fromEmail.toLowerCase(),
+    );
+    cc = [...new Set(allOthers)];
+  }
+
+  const subject = original.subject.match(/^re:/i)
+    ? original.subject
+    : `Re: ${original.subject}`;
+
+  const bodySizeBytes = Buffer.byteLength(params.body, "utf8");
+  if (bodySizeBytes > MAX_BODY_BYTES) {
+    throw new Error(`Body exceeds maximum size of 1 MiB (got ${bodySizeBytes} bytes)`);
+  }
+
+  const queuedAt = new Date().toISOString();
+  const msgId = original.headers["Message-ID"];
+  const refs = original.headers["References"];
+  const newRefs = [refs, msgId].filter(Boolean).join(" ");
+
+  await getTransporter().sendMail({
+    from: fromEmail,
+    to: toList.join(", "),
+    cc: cc.length > 0 ? cc.join(", ") : undefined,
+    subject,
+    text: params.body,
+    headers: {
+      ...(msgId ? { "In-Reply-To": msgId } : {}),
+      ...(newRefs ? { References: newRefs } : {}),
+    },
+  });
+
+  new JmapClient(fromEmail).saveToSent({
+    from: fromEmail,
+    to: toList,
+    cc: cc.length > 0 ? cc : undefined,
+    subject,
+    body: params.body,
+    sentAt: queuedAt,
+  }).catch((err) => {
+    console.warn(`[send] saveToSent failed for ${fromEmail}:`, err instanceof Error ? err.message : String(err));
+  });
+
+  return {
+    message: `Reply sent from ${fromEmail} to ${toList.join(", ")}`,
+    queued_at: queuedAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tool: forward_email
+// ---------------------------------------------------------------------------
+
+export interface ForwardEmailParams {
+  fromAccount: string;
+  email_id: string;
+  to: string | string[];
+  /** Optional introductory text prepended before the forwarded message */
+  body?: string;
+}
+
+export async function toolForwardEmail(
+  params: ForwardEmailParams,
+): Promise<{ message: string; queued_at: string }> {
+  const fromEmail = params.fromAccount.includes("@")
+    ? params.fromAccount
+    : `${params.fromAccount}@${config.domain}`;
+
+  if (!isValidEmail(fromEmail)) throw new Error(`Invalid from_account: "${params.fromAccount}"`);
+
+  const domain = fromEmail.split("@")[1];
+  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+    throw new Error(`from_account must belong to the configured domain "${config.domain}"`);
+  }
+
+  const toList = Array.isArray(params.to) ? params.to : [params.to];
+  validateAddressList(toList, "to");
+
+  const client = new JmapClient(fromEmail);
+  const original = await client.getEmail(params.email_id);
+
+  const subject = original.subject.match(/^fwd:/i)
+    ? original.subject
+    : `Fwd: ${original.subject}`;
+
+  const forwardedHeader = [
+    "---------- Forwarded message ----------",
+    `From: ${original.from}`,
+    `Date: ${original.receivedAt}`,
+    `Subject: ${original.subject}`,
+    `To: ${original.to.join(", ")}`,
+    "",
+  ].join("\n");
+
+  const originalText = original.textBody ?? original.htmlBody?.replace(/<[^>]+>/g, "") ?? "";
+  const fullBody = params.body
+    ? `${params.body}\n\n${forwardedHeader}\n${originalText}`
+    : `${forwardedHeader}\n${originalText}`;
+
+  const bodySizeBytes = Buffer.byteLength(fullBody, "utf8");
+  if (bodySizeBytes > MAX_BODY_BYTES) {
+    throw new Error(`Forwarded body exceeds maximum size of 1 MiB (got ${bodySizeBytes} bytes)`);
+  }
+
+  const queuedAt = new Date().toISOString();
+
+  await getTransporter().sendMail({
+    from: fromEmail,
+    to: toList.join(", "),
+    subject,
+    text: fullBody,
+  });
+
+  new JmapClient(fromEmail).saveToSent({
+    from: fromEmail,
+    to: toList,
+    subject,
+    body: fullBody,
+    sentAt: queuedAt,
+  }).catch((err) => {
+    console.warn(`[send] saveToSent failed for ${fromEmail}:`, err instanceof Error ? err.message : String(err));
+  });
+
+  return {
+    message: `Email forwarded from ${fromEmail} to ${toList.join(", ")}`,
+    queued_at: queuedAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // iCalendar helpers (RFC 5545)
 // ---------------------------------------------------------------------------
 

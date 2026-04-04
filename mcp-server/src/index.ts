@@ -13,8 +13,20 @@ import {
   toolReadEmail,
   toolDeleteEmail,
   toolSearchEmails,
+  toolMarkAsRead,
+  toolMarkAsUnread,
+  toolFlagEmail,
+  toolBulkMoveEmails,
+  toolBulkDeleteEmails,
+  toolBulkAddLabel,
 } from "./tools/mailbox.js";
-import { toolSendEmail, toolSendEventInvite, toolCancelEventInvite } from "./tools/send.js";
+import {
+  toolListFolders,
+  toolCreateFolder,
+  toolDeleteFolder,
+  toolMoveEmail,
+} from "./tools/folders.js";
+import { toolSendEmail, toolSendEventInvite, toolCancelEventInvite, toolReplyToEmail, toolForwardEmail } from "./tools/send.js";
 import {
   toolCreateEvent,
   toolListEvents,
@@ -954,6 +966,318 @@ function createMcpServer(apiKey: string): McpServer {
         return okContent(await toolSearchByLabel(args));
       } catch (err) {
         recordError("search_by_label");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Read/Flag state ──────────────────────────────────────────────────────────
+
+  // Tool 34: mark_as_read
+  server.tool(
+    "mark_as_read",
+    "Mark an email as read ($seen keyword). Use after an agent has processed an email to track what has been handled.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID"),
+    },
+    async (args) => {
+      recordCall("mark_as_read");
+      if (!checkRateLimit("mark_as_read", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("mark_as_read");
+        return rateLimitErr("mark_as_read");
+      }
+      try {
+        return okContent(await toolMarkAsRead(args.account, args.email_id));
+      } catch (err) {
+        recordError("mark_as_read");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 35: mark_as_unread
+  server.tool(
+    "mark_as_unread",
+    "Mark an email as unread (clears $seen keyword). Useful to flag emails that need follow-up attention.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID"),
+    },
+    async (args) => {
+      recordCall("mark_as_unread");
+      if (!checkRateLimit("mark_as_unread", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("mark_as_unread");
+        return rateLimitErr("mark_as_unread");
+      }
+      try {
+        return okContent(await toolMarkAsUnread(args.account, args.email_id));
+      } catch (err) {
+        recordError("mark_as_unread");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 36: flag_email
+  server.tool(
+    "flag_email",
+    "Flag or unflag an email ($flagged keyword). Use flagged=true to mark emails that need follow-up; false to remove the flag.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID"),
+      flagged: z.boolean().describe("true to flag the email, false to unflag it"),
+    },
+    async (args) => {
+      recordCall("flag_email");
+      if (!checkRateLimit("flag_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("flag_email");
+        return rateLimitErr("flag_email");
+      }
+      try {
+        return okContent(await toolFlagEmail(args.account, args.email_id, args.flagged));
+      } catch (err) {
+        recordError("flag_email");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Folder management ────────────────────────────────────────────────────────
+
+  // Tool 37: list_folders
+  server.tool(
+    "list_folders",
+    "List all mailbox folders for an account with email counts. Includes Inbox, Sent, Trash, Junk, and any custom folders.",
+    {
+      account: z.string().describe("The full email address of the account"),
+    },
+    async (args) => {
+      recordCall("list_folders");
+      if (!checkRateLimit("list_folders", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("list_folders");
+        return rateLimitErr("list_folders");
+      }
+      try {
+        return okContent(await toolListFolders(args));
+      } catch (err) {
+        recordError("list_folders");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 38: create_folder
+  server.tool(
+    "create_folder",
+    "Create a new mailbox folder. Optionally nest it under an existing folder.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      name: z.string().describe("Folder name to create"),
+      parent_folder: z.string().optional().describe("Name of an existing folder to nest this under (optional)"),
+    },
+    async (args) => {
+      recordCall("create_folder");
+      if (!checkRateLimit("create_folder", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("create_folder");
+        return rateLimitErr("create_folder");
+      }
+      try {
+        return okContent(await toolCreateFolder(args));
+      } catch (err) {
+        recordError("create_folder");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 39: delete_folder
+  server.tool(
+    "delete_folder",
+    "Delete a mailbox folder. The folder should be empty before deleting (move emails out first).",
+    {
+      account: z.string().describe("The full email address of the account"),
+      folder: z.string().describe("Name of the folder to delete"),
+    },
+    async (args) => {
+      recordCall("delete_folder");
+      if (!checkRateLimit("delete_folder", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("delete_folder");
+        return rateLimitErr("delete_folder");
+      }
+      try {
+        return okContent(await toolDeleteFolder(args));
+      } catch (err) {
+        recordError("delete_folder");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 40: move_email
+  server.tool(
+    "move_email",
+    "Move an email to a different folder. Use list_folders to see available folder names.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_id: z.string().describe("The JMAP email ID"),
+      folder: z.string().describe("Destination folder name (e.g. 'Inbox', 'Archive', 'Projects')"),
+    },
+    async (args) => {
+      recordCall("move_email");
+      if (!checkRateLimit("move_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("move_email");
+        return rateLimitErr("move_email");
+      }
+      try {
+        return okContent(await toolMoveEmail(args));
+      } catch (err) {
+        recordError("move_email");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Bulk operations ──────────────────────────────────────────────────────────
+
+  // Tool 41: bulk_move_emails
+  server.tool(
+    "bulk_move_emails",
+    "Move multiple emails to a folder in a single JMAP call. More efficient than calling move_email repeatedly.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_ids: z.array(z.string()).min(1).max(100).describe("List of JMAP email IDs to move (max 100)"),
+      folder: z.string().describe("Destination folder name"),
+    },
+    async (args) => {
+      recordCall("bulk_move_emails");
+      if (!checkRateLimit("bulk_move_emails", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("bulk_move_emails");
+        return rateLimitErr("bulk_move_emails");
+      }
+      try {
+        return okContent(await toolBulkMoveEmails(args.account, args.email_ids, args.folder));
+      } catch (err) {
+        recordError("bulk_move_emails");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 42: bulk_delete_emails
+  server.tool(
+    "bulk_delete_emails",
+    "Move multiple emails to Trash in a single JMAP call. More efficient than calling delete_email repeatedly.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_ids: z.array(z.string()).min(1).max(100).describe("List of JMAP email IDs to delete (max 100)"),
+    },
+    async (args) => {
+      recordCall("bulk_delete_emails");
+      if (!checkRateLimit("bulk_delete_emails", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("bulk_delete_emails");
+        return rateLimitErr("bulk_delete_emails");
+      }
+      try {
+        return okContent(await toolBulkDeleteEmails(args.account, args.email_ids));
+      } catch (err) {
+        recordError("bulk_delete_emails");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 43: bulk_add_label
+  server.tool(
+    "bulk_add_label",
+    "Apply a label to multiple emails in a single JMAP call. More efficient than calling add_label repeatedly.",
+    {
+      account: z.string().describe("The full email address of the account"),
+      email_ids: z.array(z.string()).min(1).max(100).describe("List of JMAP email IDs to label (max 100)"),
+      label: z.string().describe("Label name to apply (alphanumeric, hyphens, underscores only)"),
+    },
+    async (args) => {
+      recordCall("bulk_add_label");
+      if (!checkRateLimit("bulk_add_label", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("bulk_add_label");
+        return rateLimitErr("bulk_add_label");
+      }
+      try {
+        return okContent(await toolBulkAddLabel(args.account, args.email_ids, args.label));
+      } catch (err) {
+        recordError("bulk_add_label");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── Reply / Forward ──────────────────────────────────────────────────────────
+
+  // Tool 44: reply_to_email
+  server.tool(
+    "reply_to_email",
+    "Reply to an email with proper threading headers (In-Reply-To, References). The reply appears in the same conversation thread in the recipient's mail client.",
+    {
+      from_account: z.string().describe("The email account to reply from"),
+      email_id: z.string().describe("The JMAP email ID of the email to reply to"),
+      body: z.string().describe("Reply body text"),
+      reply_all: z.boolean().optional().describe("If true, reply to all original recipients (To + CC). Default: false (reply to sender only)"),
+    },
+    async (args) => {
+      recordCall("reply_to_email");
+      if (!checkRateLimit("reply_to_email", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
+        recordRateLimit("reply_to_email");
+        return rateLimitErr("reply_to_email");
+      }
+      try {
+        const result = await toolReplyToEmail({
+          fromAccount: args.from_account,
+          email_id: args.email_id,
+          body: args.body,
+          reply_all: args.reply_all,
+        });
+        const fromEmail = args.from_account.includes("@")
+          ? args.from_account
+          : `${args.from_account}@${config.domain}`;
+        recordAccountSend(fromEmail);
+        return okContent(result);
+      } catch (err) {
+        recordError("reply_to_email");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 45: forward_email
+  server.tool(
+    "forward_email",
+    "Forward an email to new recipients with a 'Fwd:' subject prefix and the original message quoted in the body.",
+    {
+      from_account: z.string().describe("The email account to forward from"),
+      email_id: z.string().describe("The JMAP email ID of the email to forward"),
+      to: z.union([z.string(), z.array(z.string())]).describe("Recipient email address(es) to forward to"),
+      body: z.string().optional().describe("Optional introductory text to prepend before the forwarded message"),
+    },
+    async (args) => {
+      recordCall("forward_email");
+      if (!checkRateLimit("forward_email", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
+        recordRateLimit("forward_email");
+        return rateLimitErr("forward_email");
+      }
+      try {
+        const result = await toolForwardEmail({
+          fromAccount: args.from_account,
+          email_id: args.email_id,
+          to: args.to,
+          body: args.body,
+        });
+        const fromEmail = args.from_account.includes("@")
+          ? args.from_account
+          : `${args.from_account}@${config.domain}`;
+        recordAccountSend(fromEmail);
+        return okContent(result);
+      } catch (err) {
+        recordError("forward_email");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
