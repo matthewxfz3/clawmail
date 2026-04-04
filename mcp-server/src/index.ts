@@ -14,7 +14,7 @@ import {
   toolDeleteEmail,
   toolSearchEmails,
 } from "./tools/mailbox.js";
-import { toolSendEmail, toolSendEventInvite } from "./tools/send.js";
+import { toolSendEmail, toolSendEventInvite, toolCancelEventInvite } from "./tools/send.js";
 import {
   toolCreateEvent,
   toolListEvents,
@@ -645,6 +645,43 @@ function createMcpServer(apiKey: string): McpServer {
         return okContent(result);
       } catch (err) {
         recordError("send_event_invite");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 22: cancel_event_invite
+  server.tool(
+    "cancel_event_invite",
+    "Send a cancellation email (iCalendar METHOD:CANCEL) for a previously sent invite. The recipient's calendar app will automatically remove the event. Requires the same UID used when sending the original invite.",
+    {
+      from_account: z.string().describe("The local part or full email address of the organizer (must match the original invite sender)"),
+      to: z.union([z.string(), z.array(z.string())]).describe("Recipient email address(es) — same as the original invite"),
+      uid: z.string().describe("The event UID from the original send_event_invite response"),
+      title: z.string().describe("Event title — should match the original invite"),
+      start: z.string().describe("Event start in ISO 8601 — must match the original invite"),
+      end: z.string().describe("Event end in ISO 8601 — must match the original invite"),
+      sequence: z.number().int().min(1).optional().describe("Sequence number (default: 1). Increment if sending multiple cancellation updates for the same UID."),
+    },
+    async (args) => {
+      recordCall("cancel_event_invite");
+      if (!checkRateLimit("cancel_event_invite", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
+        recordRateLimit("cancel_event_invite");
+        return rateLimitErr("cancel_event_invite");
+      }
+      try {
+        const result = await toolCancelEventInvite({
+          fromAccount: args.from_account,
+          to: args.to,
+          uid: args.uid,
+          title: args.title,
+          start: args.start,
+          end: args.end,
+          sequence: args.sequence,
+        });
+        return okContent(result);
+      } catch (err) {
+        recordError("cancel_event_invite");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
