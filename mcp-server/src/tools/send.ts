@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { config } from "../config.js";
 import { JmapClient } from "../clients/jmap.js";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,5 +143,184 @@ export async function toolSendEmail(
     message: `Email sent successfully from ${fromEmail} to ${toDisplay}` +
       (recipientCount > toList.length ? ` (and ${recipientCount - toList.length} more)` : ""),
     queued_at: queuedAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// iCalendar helpers (RFC 5545)
+// ---------------------------------------------------------------------------
+
+function toICalDate(iso: string): string {
+  // "2026-04-05T10:00:00.000Z" → "20260405T100000Z"
+  return new Date(iso).toISOString().replace(/[:-]/g, "").replace(/\.\d{3}/, "");
+}
+
+function icalEscape(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+}
+
+function foldLine(line: string): string {
+  // RFC 5545 §3.1: fold lines longer than 75 octets
+  if (line.length <= 75) return line;
+  const chunks: string[] = [line.slice(0, 75)];
+  let i = 75;
+  while (i < line.length) {
+    chunks.push(" " + line.slice(i, i + 74));
+    i += 74;
+  }
+  return chunks.join("\r\n");
+}
+
+function buildIcs(params: {
+  uid: string;
+  organizer: string;
+  attendees: string[];
+  title: string;
+  start: string;
+  end: string;
+  description?: string;
+  location?: string;
+  createdAt: string;
+}): string {
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Clawmail//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    foldLine(`UID:${params.uid}`),
+    foldLine(`DTSTART:${toICalDate(params.start)}`),
+    foldLine(`DTEND:${toICalDate(params.end)}`),
+    foldLine(`DTSTAMP:${toICalDate(params.createdAt)}`),
+    foldLine(`SUMMARY:${icalEscape(params.title)}`),
+    foldLine(`ORGANIZER;CN=${icalEscape(params.organizer)}:mailto:${params.organizer}`),
+    "SEQUENCE:0",
+    "STATUS:CONFIRMED",
+  ];
+
+  for (const att of params.attendees) {
+    lines.push(foldLine(`ATTENDEE;ROLE=REQ-PARTICIPANT;RSVP=TRUE;CN=${icalEscape(att)}:mailto:${att}`));
+  }
+
+  if (params.description) {
+    lines.push(foldLine(`DESCRIPTION:${icalEscape(params.description)}`));
+  }
+  if (params.location) {
+    lines.push(foldLine(`LOCATION:${icalEscape(params.location)}`));
+  }
+
+  lines.push("END:VEVENT", "END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+// ---------------------------------------------------------------------------
+// Tool: send_event_invite
+// ---------------------------------------------------------------------------
+
+export interface SendEventInviteParams {
+  fromAccount: string;
+  to: string | string[];
+  title: string;
+  start: string;   // ISO 8601
+  end: string;     // ISO 8601
+  description?: string;
+  location?: string;
+  /** Stable UID for this event — reuse the same UID when sending updates */
+  uid?: string;
+}
+
+export async function toolSendEventInvite(
+  params: SendEventInviteParams,
+): Promise<{ message: string; queued_at: string; uid: string }> {
+  const { fromAccount, to, title, start, end, description, location } = params;
+
+  // Resolve + validate from
+  const fromEmail = fromAccount.includes("@")
+    ? fromAccount
+    : `${fromAccount}@${config.domain}`;
+
+  if (!isValidEmail(fromEmail)) {
+    throw new Error(`Invalid from_account: "${fromAccount}"`);
+  }
+
+  const domain = fromEmail.split("@")[1];
+  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+    throw new Error(
+      `from_account must belong to the configured domain "${config.domain}", got "${domain}"`,
+    );
+  }
+
+  // Validate dates
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (isNaN(startMs)) throw new Error(`start is not a valid ISO 8601 date-time: "${start}"`);
+  if (isNaN(endMs))   throw new Error(`end is not a valid ISO 8601 date-time: "${end}"`);
+  if (endMs <= startMs) throw new Error("end must be after start");
+
+  if (!title.trim()) throw new Error("title must not be empty");
+
+  const toList = Array.isArray(to) ? to : [to];
+  validateAddressList(toList, "to");
+
+  const uid = params.uid ?? `${randomUUID()}@${config.domain}`;
+  const queuedAt = new Date().toISOString();
+
+  // Build iCalendar payload
+  const icsContent = buildIcs({
+    uid,
+    organizer: fromEmail,
+    attendees: toList,
+    title,
+    start,
+    end,
+    description,
+    location,
+    createdAt: queuedAt,
+  });
+
+  // Human-readable body for non-calendar clients
+  const textBody = [
+    `You are invited to: ${title}`,
+    `When: ${new Date(start).toUTCString()} – ${new Date(end).toUTCString()}`,
+    location ? `Where: ${location}` : "",
+    description ? `\n${description}` : "",
+    "",
+    "This invitation is attached as a calendar file (.ics).",
+  ].filter((l) => l !== undefined).join("\n").trim();
+
+  const VERIFIED_SENDER = config.sendgrid.verifiedSender;
+  const useVerifiedSender = fromEmail.toLowerCase() !== VERIFIED_SENDER.toLowerCase();
+
+  await getTransporter().sendMail({
+    from: useVerifiedSender
+      ? `"${fromEmail} via Clawmail" <${VERIFIED_SENDER}>`
+      : fromEmail,
+    replyTo: useVerifiedSender ? fromEmail : undefined,
+    to: toList.join(", "),
+    subject: `Invitation: ${title}`,
+    text: textBody,
+    icalEvent: {
+      method: "REQUEST",
+      content: icsContent,
+    },
+    // Also attach as a downloadable .ics file for clients that don't inline-parse
+    attachments: [
+      {
+        filename: "invite.ics",
+        content: icsContent,
+        contentType: "application/ics",
+      },
+    ],
+  });
+
+  return {
+    message: `Calendar invite "${title}" sent from ${fromEmail} to ${toList.join(", ")}`,
+    queued_at: queuedAt,
+    uid,
   };
 }

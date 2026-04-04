@@ -14,7 +14,7 @@ import {
   toolDeleteEmail,
   toolSearchEmails,
 } from "./tools/mailbox.js";
-import { toolSendEmail } from "./tools/send.js";
+import { toolSendEmail, toolSendEventInvite } from "./tools/send.js";
 import {
   toolCreateEvent,
   toolListEvents,
@@ -600,6 +600,49 @@ function createMcpServer(apiKey: string): McpServer {
         return okContent(await toolApplyRules(args));
       } catch (err) {
         recordError("apply_rules");
+        return errContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Tool 21: send_event_invite
+  server.tool(
+    "send_event_invite",
+    "Send a calendar invitation email that auto-appears in Google Calendar, Outlook, Apple Calendar, and any RFC 5545-compatible app",
+    {
+      from_account: z.string().describe("The local part or full email address to send from"),
+      to: z.union([z.string(), z.array(z.string())]).describe("Recipient email address(es) — they become attendees"),
+      title: z.string().describe("Event title"),
+      start: z.string().describe("Event start in ISO 8601 (e.g. 2026-04-10T14:00:00Z)"),
+      end: z.string().describe("Event end in ISO 8601 — must be after start"),
+      description: z.string().optional().describe("Optional event description shown in the invite"),
+      location: z.string().optional().describe("Optional location or video call URL"),
+      uid: z.string().optional().describe("Stable event UID — reuse the same UID to send an update for an existing invite"),
+    },
+    async (args) => {
+      recordCall("send_event_invite");
+      if (!checkRateLimit("send_event_invite", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
+        recordRateLimit("send_event_invite");
+        return rateLimitErr("send_event_invite");
+      }
+      try {
+        const result = await toolSendEventInvite({
+          fromAccount: args.from_account,
+          to: args.to,
+          title: args.title,
+          start: args.start,
+          end: args.end,
+          description: args.description,
+          location: args.location,
+          uid: args.uid,
+        });
+        const fromEmail = args.from_account.includes("@")
+          ? args.from_account
+          : `${args.from_account}@${config.domain}`;
+        recordAccountSend(fromEmail);
+        return okContent(result);
+      } catch (err) {
+        recordError("send_event_invite");
         return errContent(err instanceof Error ? err.message : String(err));
       }
     },
