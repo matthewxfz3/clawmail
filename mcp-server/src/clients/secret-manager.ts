@@ -75,7 +75,7 @@ export async function writeSecret(name: string, value: string): Promise<void> {
 
   // Add a new version
   const payload = Buffer.from(value).toString("base64");
-  const addRes = await fetch(`${base}:addSecretVersion`, {
+  const addRes = await fetch(`${base}:addVersion`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ payload: { data: payload } }),
