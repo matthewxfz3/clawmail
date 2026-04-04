@@ -105,11 +105,12 @@ export async function toolSendEmail(
 
   const queuedAt = new Date().toISOString();
 
-  // SendGrid requires a verified sender identity.
-  // Set SENDGRID_VERIFIED_SENDER to a verified address; the agent address
-  // is placed in Reply-To so recipients can reply correctly.
+  // SendGrid domain authentication covers all @domain addresses, so any agent
+  // address can be used directly as From — no Reply-To relay needed.
+  // Fall back to the verified sender only for addresses outside our domain.
+  const fromDomain = fromEmail.split("@")[1].toLowerCase();
+  const useVerifiedSender = fromDomain !== config.domain.toLowerCase();
   const VERIFIED_SENDER = config.sendgrid.verifiedSender;
-  const useVerifiedSender = fromEmail.toLowerCase() !== VERIFIED_SENDER.toLowerCase();
 
   await getTransporter().sendMail({
     from: useVerifiedSender
@@ -293,8 +294,9 @@ export async function toolSendEventInvite(
     "This invitation is attached as a calendar file (.ics).",
   ].filter((l) => l !== undefined).join("\n").trim();
 
+  const fromDomain2 = fromEmail.split("@")[1].toLowerCase();
+  const useVerifiedSender = fromDomain2 !== config.domain.toLowerCase();
   const VERIFIED_SENDER = config.sendgrid.verifiedSender;
-  const useVerifiedSender = fromEmail.toLowerCase() !== VERIFIED_SENDER.toLowerCase();
 
   await getTransporter().sendMail({
     from: useVerifiedSender
