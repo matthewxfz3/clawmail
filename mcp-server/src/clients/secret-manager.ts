@@ -18,7 +18,7 @@ async function getProject(): Promise<string> {
     signal: AbortSignal.timeout(3000),
   });
   if (!res.ok) throw new Error("Failed to resolve GCP project ID from metadata service");
-  _cachedProject = await res.text();
+  _cachedProject = (await res.text()).trim();
   return _cachedProject;
 }
 
@@ -58,10 +58,10 @@ export async function readSecret(name: string): Promise<string | null> {
 /** Create or update a secret with a new version. */
 export async function writeSecret(name: string, value: string): Promise<void> {
   const [token, project] = await Promise.all([getAccessToken(), getProject()]);
-  const secretPath = `projects/${project}/secrets/${name}`;
+  const base = `${SM_BASE}/projects/${project}/secrets/${name}`;
 
-  // Try to create the secret — secretId goes as query param, not in body
-  const createRes = await fetch(`${SM_BASE}/projects/${project}/secrets?secretId=${encodeURIComponent(name)}`, {
+  // Try to create (idempotent — 409 ALREADY_EXISTS is fine)
+  const createRes = await fetch(`${SM_BASE}/projects/${project}/secrets?secretId=${name}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ replication: { automatic: {} } }),
@@ -75,7 +75,7 @@ export async function writeSecret(name: string, value: string): Promise<void> {
 
   // Add a new version
   const payload = Buffer.from(value).toString("base64");
-  const addRes = await fetch(`${SM_BASE}/${secretPath}:addSecretVersion`, {
+  const addRes = await fetch(`${base}:addSecretVersion`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ payload: { data: payload } }),
