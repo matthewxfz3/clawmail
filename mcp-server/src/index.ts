@@ -1,7 +1,10 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { mcpOk, mcpError, mcpCaughtError } from "./lib/errors.js";
+import { idempotencyCheck, idempotencySet } from "./lib/idempotency.js";
+import { JmapClient } from "./clients/jmap.js";
 import { config } from "./config.js";
 import {
   toolCreateAccount,
@@ -99,24 +102,21 @@ function checkRateLimit(
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers (thin aliases kept for call-site brevity)
 // ---------------------------------------------------------------------------
 
-function okContent(result: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-  };
-}
+const okContent = mcpOk;
 
 function errContent(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    isError: true as const,
-  };
+  return mcpError("TOOL_ERROR", message, false);
 }
 
 function rateLimitErr(tool: string) {
-  return errContent(`Rate limit exceeded for tool "${tool}". Please try again later.`);
+  return mcpError(
+    "RATE_LIMIT",
+    `Rate limit exceeded for tool "${tool}". Please try again later.`,
+    true,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ function rateLimitErr(tool: string) {
 function createMcpServer(apiKey: string): McpServer {
   const server = new McpServer(
     { name: "clawmail", version: "0.1.0" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   );
 
   // Tool 1: create_account
@@ -302,9 +302,14 @@ function createMcpServer(apiKey: string): McpServer {
       body: z.string().describe("Plain-text email body (max 1 MiB)"),
       cc: z.array(z.string()).optional().describe("CC recipient email addresses"),
       bcc: z.array(z.string()).optional().describe("BCC recipient email addresses"),
+      idempotency_key: z.string().optional().describe("Unique key to prevent duplicate sends on retry. Results are cached for 24h."),
     },
     async (args) => {
       recordCall("send_email");
+      if (args.idempotency_key) {
+        const cached = idempotencyCheck(args.idempotency_key);
+        if (cached !== undefined) return okContent(cached);
+      }
       if (!checkRateLimit("send_email", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("send_email");
         return rateLimitErr("send_email");
@@ -322,10 +327,11 @@ function createMcpServer(apiKey: string): McpServer {
           ? args.from_account
           : `${args.from_account}@${config.domain}`;
         recordAccountSend(fromEmail);
+        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
         return okContent(result);
       } catch (err) {
         recordError("send_email");
-        return errContent(err instanceof Error ? err.message : String(err));
+        return mcpCaughtError(err, "SEND_FAILED");
       }
     },
   );
@@ -1222,9 +1228,14 @@ function createMcpServer(apiKey: string): McpServer {
       email_id: z.string().describe("The JMAP email ID of the email to reply to"),
       body: z.string().describe("Reply body text"),
       reply_all: z.boolean().optional().describe("If true, reply to all original recipients (To + CC). Default: false (reply to sender only)"),
+      idempotency_key: z.string().optional().describe("Unique key to prevent duplicate sends on retry. Results are cached for 24h."),
     },
     async (args) => {
       recordCall("reply_to_email");
+      if (args.idempotency_key) {
+        const cached = idempotencyCheck(args.idempotency_key);
+        if (cached !== undefined) return okContent(cached);
+      }
       if (!checkRateLimit("reply_to_email", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("reply_to_email");
         return rateLimitErr("reply_to_email");
@@ -1240,10 +1251,11 @@ function createMcpServer(apiKey: string): McpServer {
           ? args.from_account
           : `${args.from_account}@${config.domain}`;
         recordAccountSend(fromEmail);
+        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
         return okContent(result);
       } catch (err) {
         recordError("reply_to_email");
-        return errContent(err instanceof Error ? err.message : String(err));
+        return mcpCaughtError(err, "SEND_FAILED");
       }
     },
   );
@@ -1257,9 +1269,14 @@ function createMcpServer(apiKey: string): McpServer {
       email_id: z.string().describe("The JMAP email ID of the email to forward"),
       to: z.union([z.string(), z.array(z.string())]).describe("Recipient email address(es) to forward to"),
       body: z.string().optional().describe("Optional introductory text to prepend before the forwarded message"),
+      idempotency_key: z.string().optional().describe("Unique key to prevent duplicate sends on retry. Results are cached for 24h."),
     },
     async (args) => {
       recordCall("forward_email");
+      if (args.idempotency_key) {
+        const cached = idempotencyCheck(args.idempotency_key);
+        if (cached !== undefined) return okContent(cached);
+      }
       if (!checkRateLimit("forward_email", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("forward_email");
         return rateLimitErr("forward_email");
@@ -1275,10 +1292,76 @@ function createMcpServer(apiKey: string): McpServer {
           ? args.from_account
           : `${args.from_account}@${config.domain}`;
         recordAccountSend(fromEmail);
+        if (args.idempotency_key) idempotencySet(args.idempotency_key, result);
         return okContent(result);
       } catch (err) {
         recordError("forward_email");
-        return errContent(err instanceof Error ? err.message : String(err));
+        return mcpCaughtError(err, "SEND_FAILED");
+      }
+    },
+  );
+
+  // ── MCP Resources ───────────────────────────────────────────────────────────
+  // Resources provide live, subscribable views of mailbox state.
+  // Agents should prefer reading these over calling list_emails/read_email
+  // for repeated polling — they save context and signal intent to the host.
+
+  // Resource: email://inbox/{account}
+  // Returns a paginated summary of the inbox (up to 50 most recent emails).
+  server.resource(
+    "inbox",
+    new ResourceTemplate("email://inbox/{account}", { list: undefined }),
+    { description: "Live view of the inbox for the given account. Returns up to 50 most recent email summaries." },
+    async (uri, { account }) => {
+      const jmap = new JmapClient(account as string);
+      try {
+        const emails = await jmap.listEmails("Inbox", 50);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ account, emails }, null, 2),
+          }],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ account, error: message }),
+          }],
+        };
+      }
+    },
+  );
+
+  // Resource: email://thread/{account}/{thread_id}
+  // Returns all emails in a thread, ordered oldest-first.
+  server.resource(
+    "thread",
+    new ResourceTemplate("email://thread/{account}/{thread_id}", { list: undefined }),
+    { description: "All emails in a conversation thread, ordered oldest-first." },
+    async (uri, { account, thread_id }) => {
+      const jmap = new JmapClient(account as string);
+      try {
+        const emails = await jmap.getThread(thread_id as string);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ account, thread_id, emails }, null, 2),
+          }],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ account, thread_id, error: message }),
+          }],
+        };
       }
     },
   );
