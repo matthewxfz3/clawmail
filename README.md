@@ -14,16 +14,46 @@ Built on [Stalwart Mail Server](https://stalw.art) (SMTP + IMAP + JMAP), deploye
 
 ## MCP Tool Reference
 
+### Account management
+
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `create_account` | `local_part: string` | Creates `{local_part}@{DOMAIN}`, returns the full address |
+| `create_account` | `local_part` | Creates `{local_part}@{DOMAIN}`, returns the full address |
 | `list_accounts` | — | Lists all accounts on the server |
-| `delete_account` | `local_part: string` | Permanently removes an account |
+| `delete_account` | `local_part` | Permanently removes an account and all its mail |
+
+### Email
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
 | `list_emails` | `account`, `folder?`, `limit?` | Lists email summaries in inbox or named folder |
 | `read_email` | `account`, `email_id` | Returns full email (headers + body) |
 | `send_email` | `from_account`, `to`, `subject`, `body`, `cc?`, `bcc?` | Sends an email via the configured relay |
 | `delete_email` | `account`, `email_id` | Moves email to trash |
-| `search_emails` | `account`, `query` | Full-text search across inbox |
+| `search_emails` | `account`, `query` | Full-text search across all folders |
+| `mark_as_spam` | `account`, `email_id` | Moves email to Junk folder |
+| `mark_as_not_spam` | `account`, `email_id` | Moves email from Junk back to Inbox |
+
+### Calendar
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `create_event` | `account`, `title`, `start`, `end`, `description?`, `attendees?` | Creates a calendar event for an agent account |
+| `list_events` | `account`, `from_date?`, `to_date?` | Lists events, optionally filtered by date range |
+| `get_event` | `account`, `event_id` | Returns a single event by ID |
+| `update_event` | `account`, `event_id`, `title?`, `start?`, `end?`, `description?`, `attendees?` | Updates fields on an existing event |
+| `delete_event` | `account`, `event_id` | Deletes a calendar event |
+| `check_availability` | `account`, `start`, `end` | Returns whether a time window is free of events |
+| `send_event_invite` | `from_account`, `to`, `title`, `start`, `end`, `description?`, `location?`, `uid?`, `video_url?` | Sends an RFC 5545 calendar invite that auto-appears in Google Calendar, Outlook, and Apple Calendar. Auto-creates a Google Meet or Daily.co video room if configured. |
+
+### Mailbox rules
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `create_rule` | `account`, `name`, `condition`, `action` | Creates a rule that matches emails by sender/subject/age and moves, marks, or deletes them |
+| `list_rules` | `account` | Lists all rules for an account |
+| `delete_rule` | `account`, `rule_id` | Deletes a rule by ID |
+| `apply_rules` | `account`, `folder?` | Runs all rules against a folder and returns a summary of actions taken |
 
 ---
 
