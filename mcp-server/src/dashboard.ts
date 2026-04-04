@@ -4,6 +4,8 @@ import { config } from "./config.js";
 import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail } from "./tools/mailbox.js";
 import { toolSendEmail } from "./tools/send.js";
+import { toolListEvents, type CalendarEvent } from "./tools/calendar.js";
+import { toolListRules, type RuleCondition, type RuleAction, type MailboxRule } from "./tools/rules.js";
 import { JmapClient } from "./clients/jmap.js";
 import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
 
@@ -113,6 +115,10 @@ const CSS = `
   .pill{display:inline-block;background:#eef2ff;color:#4f46e5;border-radius:12px;padding:2px 10px;font-size:.75rem;font-weight:600}
   .pill.green{background:#dcfce7;color:#16a34a}
   .pill.red{background:#fee2e2;color:#dc2626}
+  .pill.amber{background:#fef3c7;color:#92400e}
+  .pill.blue{background:#eff6ff;color:#1d4ed8}
+  .pill.gray{background:#f1f5f9;color:#475569}
+  td.mono{font-family:monospace;font-size:.82rem;color:#555}
   .empty{color:#999;font-size:.85rem;padding:8px 0}
   .url-display{font-family:monospace;font-size:.85rem;color:#4f46e5;word-break:break-all}
   /* account cards */
@@ -174,6 +180,7 @@ function tabBar(active: string): string {
     { id: "overview", label: "Overview", href: "/dashboard" },
     { id: "inboxes", label: "Inboxes", href: "/dashboard?tab=inboxes" },
     { id: "metrics", label: "Metrics", href: "/dashboard?tab=metrics" },
+    { id: "calendars", label: "Calendars & Rules", href: "/dashboard?tab=calendars" },
   ];
   const links = tabs.map(t =>
     `<a href="${t.href}" class="${active === t.id ? "active" : ""}">${t.label}</a>`
@@ -713,10 +720,315 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
 }
 
 // ---------------------------------------------------------------------------
+// Calendars & Rules helpers
+// ---------------------------------------------------------------------------
+
+function formatCondition(cond: RuleCondition): string {
+  const parts: string[] = [];
+  if (cond.from !== undefined)             parts.push(`<span class="pill blue">from: ${escHtml(cond.from)}</span>`);
+  if (cond.subject !== undefined)          parts.push(`<span class="pill blue">subject: ${escHtml(cond.subject)}</span>`);
+  if (cond.hasAttachment !== undefined)    parts.push(`<span class="pill blue">${cond.hasAttachment ? "has attachment" : "no attachment"}</span>`);
+  if (cond.olderThanDays !== undefined)    parts.push(`<span class="pill blue">older than ${cond.olderThanDays}d</span>`);
+  return parts.join(" ") || `<span class="pill gray">any</span>`;
+}
+
+function formatAction(act: RuleAction): string {
+  const parts: string[] = [];
+  if (act.moveTo !== undefined)  parts.push(`<span class="pill green">→ ${escHtml(act.moveTo)}</span>`);
+  if (act.markRead)              parts.push(`<span class="pill amber">mark read</span>`);
+  if (act.delete)                parts.push(`<span class="pill red">delete</span>`);
+  return parts.join(" ") || `<span class="pill gray">none</span>`;
+}
+
+function formatEventBadge(start: string): string {
+  return new Date(start).getTime() > Date.now()
+    ? `<span class="badge ok">upcoming</span>`
+    : `<span style="background:#e5e7eb;color:#6b7280;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:12px">past</span>`;
+}
+
+function formatDateShort(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return escHtml(iso); }
+}
+
+/** Synchronous folder tab bar — pass pre-fetched mailboxes. Hides system mailboxes (name starts with _). */
+function buildFolderTabBar(
+  account: string,
+  mailboxes: Array<{ name: string; role: string; totalEmails: number }>,
+  activeFolder: string,
+): string {
+  const FOLDER_ORDER: Record<string, number> = { inbox: 0, sent: 1, drafts: 2, trash: 3, spam: 4 };
+  const visible = mailboxes
+    .filter(mb => !mb.name.startsWith("_"))
+    .sort((a, b) => {
+      const ra = FOLDER_ORDER[a.role] ?? 9;
+      const rb = FOLDER_ORDER[b.role] ?? 9;
+      return ra !== rb ? ra - rb : a.name.localeCompare(b.name);
+    });
+
+  const folderLinks = visible.map(mb => {
+    const isActive = mb.name.toLowerCase() === activeFolder.toLowerCase();
+    const badge = mb.totalEmails > 0
+      ? ` <span style="background:${isActive ? "rgba(255,255,255,0.3)" : "#e5e7eb"};color:${isActive ? "#fff" : "#444"};border-radius:10px;padding:1px 6px;font-size:.72rem">${mb.totalEmails}</span>`
+      : "";
+    return `<a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(mb.name)}"
+      style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${isActive ? "600" : "500"};text-decoration:none;${isActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">${escHtml(mb.name)}${badge}</a>`;
+  }).join("");
+
+  const calActive = activeFolder === "__calendar";
+  const rulesActive = activeFolder === "__rules";
+
+  return `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:18px">
+      ${folderLinks}
+      <span style="display:inline-block;width:1px;background:#e5e7eb;height:20px;margin:0 2px;align-self:center"></span>
+      <a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar"
+        style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${calActive ? "600" : "500"};text-decoration:none;${calActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">📅 Calendar</a>
+      <a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__rules"
+        style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${rulesActive ? "600" : "500"};text-decoration:none;${rulesActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">⚙️ Rules</a>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Calendars & Rules (cross-account summary)
+// ---------------------------------------------------------------------------
+
+async function buildCalendarsTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
+  const capped = accounts.slice(0, 10);
+
+  const [eventResults, ruleResults] = await Promise.all([
+    Promise.allSettled(capped.map(async (a) => {
+      const { events } = await toolListEvents({ account: a.email });
+      return { email: a.email, events };
+    })),
+    Promise.allSettled(capped.map(async (a) => {
+      const { rules } = await toolListRules({ account: a.email });
+      return { email: a.email, rules };
+    })),
+  ]);
+
+  // Flatten events across all accounts, sorted ascending by start
+  const allEvents: Array<CalendarEvent & { accountEmail: string }> = [];
+  for (const r of eventResults) {
+    if (r.status === "fulfilled") {
+      for (const ev of r.value.events) {
+        allEvents.push({ ...ev, accountEmail: r.value.email });
+      }
+    }
+  }
+  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+  const eventRows = allEvents.length === 0
+    ? `<tr><td colspan="5" class="empty" style="padding:24px;text-align:center">
+        <div style="font-size:1rem;margin-bottom:6px">📅</div>
+        <div>No calendar events across any account.</div>
+        <div style="font-size:.78rem;color:#bbb;margin-top:4px">Use <code>create_event</code> to add events.</div>
+      </td></tr>`
+    : allEvents.map(ev => `
+      <tr>
+        <td class="mono">${escHtml(ev.accountEmail)}</td>
+        <td style="font-weight:500">${escHtml(ev.title)}</td>
+        <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.start)}</td>
+        <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.end)}</td>
+        <td>${formatEventBadge(ev.start)}</td>
+      </tr>`).join("");
+
+  // Flatten rules across all accounts
+  const allRules: Array<MailboxRule & { accountEmail: string }> = [];
+  for (const r of ruleResults) {
+    if (r.status === "fulfilled") {
+      for (const rule of r.value.rules) {
+        allRules.push({ ...rule, accountEmail: r.value.email });
+      }
+    }
+  }
+
+  const ruleRows = allRules.length === 0
+    ? `<tr><td colspan="4" class="empty" style="padding:24px;text-align:center">
+        <div style="font-size:1rem;margin-bottom:6px">⚙️</div>
+        <div>No mailbox rules configured.</div>
+        <div style="font-size:.78rem;color:#bbb;margin-top:4px">Use <code>create_rule</code> to add rules.</div>
+      </td></tr>`
+    : allRules.map(rule => `
+      <tr>
+        <td class="mono">${escHtml(rule.accountEmail)}</td>
+        <td style="font-weight:500">${escHtml(rule.name)}</td>
+        <td>${formatCondition(rule.condition)}</td>
+        <td>${formatAction(rule.action)}</td>
+      </tr>`).join("");
+
+  const cappedNote = accounts.length > 10
+    ? `<p style="font-size:.72rem;color:#aaa;margin-top:10px">Showing top 10 of ${accounts.length} accounts.</p>`
+    : "";
+
+  return `
+    <div class="card">
+      <h2>Upcoming events</h2>
+      <table>
+        <thead><tr>
+          <th>Account</th>
+          <th>Title</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>${eventRows}</tbody>
+      </table>
+      ${cappedNote}
+    </div>
+    <div class="card">
+      <h2>Active rules</h2>
+      <table>
+        <thead><tr>
+          <th>Account</th>
+          <th>Rule name</th>
+          <th>Condition</th>
+          <th>Action</th>
+        </tr></thead>
+        <tbody>${ruleRows}</tbody>
+      </table>
+      ${cappedNote}
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-page: Account calendar
+// ---------------------------------------------------------------------------
+
+async function buildAccountCalendarPage(account: string): Promise<string> {
+  const client = new JmapClient(account);
+  const [eventsResult, mailboxesResult] = await Promise.allSettled([
+    toolListEvents({ account }),
+    client.listMailboxes(),
+  ]);
+
+  const events = eventsResult.status === "fulfilled" ? eventsResult.value.events : [];
+  const fetchError = eventsResult.status === "rejected" ? String(eventsResult.reason) : null;
+  const mailboxes = mailboxesResult.status === "fulfilled" ? mailboxesResult.value : [];
+
+  const rows = fetchError
+    ? `<tr><td colspan="5" style="color:#dc2626;padding:16px">Failed to load events: ${escHtml(fetchError)}</td></tr>`
+    : events.length === 0
+    ? `<tr><td colspan="5" class="empty" style="padding:32px;text-align:center">
+        <div style="font-size:1.2rem;margin-bottom:8px">📅</div>
+        <div style="font-weight:600">No calendar events</div>
+        <div style="font-size:.82rem;color:#bbb;margin-top:4px">Use the <code>create_event</code> MCP tool to schedule events.</div>
+      </td></tr>`
+    : events.map(ev => {
+        const desc = ev.description ? `<span class="row-detail">${escHtml(ev.description.slice(0, 80))}${ev.description.length > 80 ? "…" : ""}</span>` : "";
+        const attendees = ev.attendees?.length
+          ? `<span style="font-size:.78rem;color:#888">${ev.attendees.map(escHtml).join(", ")}</span>`
+          : `<span style="color:#ccc;font-size:.78rem">—</span>`;
+        return `<tr>
+          <td>${escHtml(ev.title)}${desc}</td>
+          <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.start)}</td>
+          <td style="white-space:nowrap;color:#555;font-size:.83rem">${formatDateShort(ev.end)}</td>
+          <td>${attendees}</td>
+          <td>${formatEventBadge(ev.start)}</td>
+        </tr>`;
+      }).join("");
+
+  return page(`Calendar — ${account}`, `
+    ${topbar()}
+    ${tabBar("inboxes")}
+    <div class="container">
+      <div>
+        <a class="back-link" href="/dashboard?tab=inboxes">← All accounts</a>
+        <div class="page-title">${escHtml(account)}</div>
+        <div class="page-sub">Calendar — ${events.length} event${events.length !== 1 ? "s" : ""}</div>
+      </div>
+      <div class="card" style="padding:20px 20px 0">
+        ${buildFolderTabBar(account, mailboxes, "__calendar")}
+        <div style="margin:0 -20px">
+          <table>
+            <thead><tr>
+              <th style="padding-left:20px">Title</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Attendees</th>
+              <th>Status</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="height:16px"></div>
+      </div>
+    </div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Sub-page: Account rules
+// ---------------------------------------------------------------------------
+
+async function buildAccountRulesPage(account: string): Promise<string> {
+  const client = new JmapClient(account);
+  const [rulesResult, mailboxesResult] = await Promise.allSettled([
+    toolListRules({ account }),
+    client.listMailboxes(),
+  ]);
+
+  const rules = rulesResult.status === "fulfilled" ? rulesResult.value.rules : [];
+  const fetchError = rulesResult.status === "rejected" ? String(rulesResult.reason) : null;
+  const mailboxes = mailboxesResult.status === "fulfilled" ? mailboxesResult.value : [];
+
+  const rows = fetchError
+    ? `<tr><td colspan="4" style="color:#dc2626;padding:16px">Failed to load rules: ${escHtml(fetchError)}</td></tr>`
+    : rules.length === 0
+    ? `<tr><td colspan="4" class="empty" style="padding:32px;text-align:center">
+        <div style="font-size:1.2rem;margin-bottom:8px">⚙️</div>
+        <div style="font-weight:600">No rules configured</div>
+        <div style="font-size:.82rem;color:#bbb;margin-top:4px">Use the <code>create_rule</code> MCP tool to automate your inbox.</div>
+      </td></tr>`
+    : rules.map(rule => {
+        const created = formatDateShort(rule.createdAt);
+        return `<tr>
+          <td style="font-weight:500">${escHtml(rule.name)}</td>
+          <td>${formatCondition(rule.condition)}</td>
+          <td>${formatAction(rule.action)}</td>
+          <td style="white-space:nowrap;color:#888;font-size:.81rem">${escHtml(created)}</td>
+        </tr>`;
+      }).join("");
+
+  return page(`Rules — ${account}`, `
+    ${topbar()}
+    ${tabBar("inboxes")}
+    <div class="container">
+      <div>
+        <a class="back-link" href="/dashboard?tab=inboxes">← All accounts</a>
+        <div class="page-title">${escHtml(account)}</div>
+        <div class="page-sub">Rules — ${rules.length} active</div>
+      </div>
+      <div class="card" style="padding:20px 20px 0">
+        ${buildFolderTabBar(account, mailboxes, "__rules")}
+        <div style="margin:0 -20px">
+          <table>
+            <thead><tr>
+              <th style="padding-left:20px">Rule name</th>
+              <th>Condition</th>
+              <th>Action</th>
+              <th>Created</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="height:16px"></div>
+      </div>
+    </div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
 // Sub-page: Account inbox
 // ---------------------------------------------------------------------------
 
 async function buildInboxPage(account: string, folder = "Inbox"): Promise<string> {
+  // Pseudo-folder interception for calendar and rules views
+  if (folder === "__calendar") return buildAccountCalendarPage(account);
+  if (folder === "__rules")    return buildAccountRulesPage(account);
+
   const client = new JmapClient(account);
 
   // Fetch mailboxes and emails in parallel
@@ -729,26 +1041,10 @@ async function buildInboxPage(account: string, folder = "Inbox"): Promise<string
   const emails = emailsResult.status === "fulfilled" ? emailsResult.value.emails : [];
   const emailsError = emailsResult.status === "rejected" ? String(emailsResult.reason) : null;
 
-  // Sort mailboxes: Inbox first, then Sent, then alphabetical
-  const FOLDER_ORDER: Record<string, number> = { inbox: 0, sent: 1, drafts: 2, trash: 3, spam: 4 };
-  mailboxes.sort((a, b) => {
-    const ra = FOLDER_ORDER[a.role] ?? 9;
-    const rb = FOLDER_ORDER[b.role] ?? 9;
-    return ra !== rb ? ra - rb : a.name.localeCompare(b.name);
-  });
+  const totalAcrossAll = mailboxes.filter(mb => !mb.name.startsWith("_")).reduce((s, m) => s + m.totalEmails, 0);
 
-  const totalAcrossAll = mailboxes.reduce((s, m) => s + m.totalEmails, 0);
-
-  // Folder tabs
-  const folderTabs = mailboxes.length > 0 ? `
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px">
-      ${mailboxes.map(mb => {
-        const isActive = mb.name.toLowerCase() === folder.toLowerCase();
-        const badge = mb.totalEmails > 0 ? ` <span style="background:${isActive ? "rgba(255,255,255,0.3)" : "#e5e7eb"};color:${isActive ? "#fff" : "#444"};border-radius:10px;padding:1px 6px;font-size:.72rem">${mb.totalEmails}</span>` : "";
-        return `<a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(mb.name)}"
-          style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${isActive ? "600" : "500"};text-decoration:none;${isActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">${escHtml(mb.name)}${badge}</a>`;
-      }).join("")}
-    </div>` : "";
+  // Folder tabs (reuses buildFolderTabBar — hides system mailboxes, appends Calendar + Rules)
+  const folderTabs = buildFolderTabBar(account, mailboxes, folder);
 
   // Email rows
   const rows = emailsError
@@ -855,13 +1151,20 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "
     content = (flashBanner ? `<div>${flashBanner}</div>` : "") + await buildInboxesTab(accounts);
   } else if (tab === "metrics") {
     content = await buildMetricsTab(accounts);
+  } else if (tab === "calendars") {
+    content = await buildCalendarsTab(accounts);
   } else {
     content = await buildOverview(serviceUrl, accounts);
   }
 
+  const activeTab = tab === "inboxes" ? "inboxes"
+    : tab === "metrics" ? "metrics"
+    : tab === "calendars" ? "calendars"
+    : "overview";
+
   return page("Dashboard", `
     ${topbar()}
-    ${tabBar(tab === "inboxes" ? "inboxes" : tab === "metrics" ? "metrics" : "overview")}
+    ${tabBar(activeTab)}
     <div class="container">${content}</div>
   `);
 }
