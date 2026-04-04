@@ -619,6 +619,27 @@ export class JmapClient {
   }
 
   // -------------------------------------------------------------------------
+  // Public: permanently destroy an email (no Trash involved)
+  // Used for system emails (calendar events, rules) where Trash is irrelevant.
+  // -------------------------------------------------------------------------
+
+  async destroyEmail(emailId: string): Promise<void> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Email/set",
+        { accountId, destroy: [emailId] },
+        "de1",
+      ],
+    ]);
+    const resp = responses.find(([, , id]) => id === "de1");
+    const notDestroyed = (resp?.[1] as { notDestroyed?: Record<string, unknown> })?.notDestroyed;
+    if (notDestroyed?.[emailId]) {
+      throw new Error(`Failed to destroy email ${emailId}: ${JSON.stringify(notDestroyed[emailId])}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Public: ensure a mailbox exists, create it if not — returns mailbox id
   // -------------------------------------------------------------------------
 
@@ -770,7 +791,7 @@ export class JmapClient {
         {
           accountId,
           filter: { inMailbox: mailboxId },
-          sort: [{ property: "sentAt", isAscending: true }],
+          sort: [{ property: "receivedAt", isAscending: true }],
           limit: 500,
         },
         "sq1",
@@ -780,7 +801,7 @@ export class JmapClient {
         {
           accountId,
           "#ids": { resultOf: "sq1", name: "Email/query", path: "/ids" },
-          properties: ["id", "subject", "textBody"],
+          properties: ["id", "subject", "textBody", "bodyValues"],
           fetchTextBodyValues: true,
         },
         "sg1",
@@ -792,7 +813,13 @@ export class JmapClient {
 
     return list.map((item) => {
       const subject = typeof item["subject"] === "string" ? item["subject"] : "";
-      const body = firstBodyText(item["textBody"]) ?? "";
+      // JMAP stores body text in bodyValues[partId], not inline in textBody parts
+      const textParts = Array.isArray(item["textBody"]) ? item["textBody"] as Array<Record<string, unknown>> : [];
+      const bodyValues = item["bodyValues"] as Record<string, Record<string, unknown>> | undefined;
+      const partId = textParts.length > 0 ? String(textParts[0]["partId"] ?? "body") : "body";
+      const body = typeof bodyValues?.[partId]?.["value"] === "string"
+        ? bodyValues[partId]["value"] as string
+        : "";
       return { id: String(item["id"] ?? ""), subject, body };
     });
   }

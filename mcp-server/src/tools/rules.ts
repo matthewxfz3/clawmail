@@ -160,7 +160,7 @@ export async function toolDeleteRule(params: {
   for (const item of items) {
     const parsed = parseSubject(item.subject);
     if (parsed?.ruleId === params.rule_id) {
-      await client.deleteEmail(item.id);
+      await client.destroyEmail(item.id);
       return { message: `Rule ${params.rule_id} deleted` };
     }
   }

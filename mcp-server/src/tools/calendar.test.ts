@@ -7,7 +7,7 @@ vi.mock("../config.js", () => ({
 const mockClient = vi.hoisted(() => ({
   createSystemEmail: vi.fn(),
   listSystemEmails: vi.fn(),
-  deleteEmail: vi.fn(),
+  destroyEmail: vi.fn(),
 }));
 
 vi.mock("../clients/jmap.js", () => ({
@@ -40,7 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockClient.createSystemEmail.mockResolvedValue("new-email-id");
   mockClient.listSystemEmails.mockResolvedValue([]);
-  mockClient.deleteEmail.mockResolvedValue(undefined);
+  mockClient.destroyEmail.mockResolvedValue(undefined);
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -174,7 +174,7 @@ describe("toolUpdateEvent", () => {
 
     expect(result.event.title).toBe("Updated");
     expect(result.event.start).toBe("2030-06-01T12:00:00Z");
-    expect(mockClient.deleteEmail).toHaveBeenCalledWith("email-ev-1");
+    expect(mockClient.destroyEmail).toHaveBeenCalledWith("email-ev-1");
     expect(mockClient.createSystemEmail).toHaveBeenCalledOnce();
   });
 
@@ -191,7 +191,7 @@ describe("toolDeleteEvent", () => {
     mockClient.listSystemEmails.mockResolvedValue([makeEventEmail("del-1", "To Delete")]);
     const result = await toolDeleteEvent({ account: "agent@test.example.com", event_id: "del-1" });
     expect(result.message).toContain("del-1");
-    expect(mockClient.deleteEmail).toHaveBeenCalledWith("email-del-1");
+    expect(mockClient.destroyEmail).toHaveBeenCalledWith("email-del-1");
   });
 
   it("throws when event not found", async () => {
