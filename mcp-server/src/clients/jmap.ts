@@ -538,6 +538,61 @@ export class JmapClient {
   }
 
   // -------------------------------------------------------------------------
+  // Public: get all emails in a thread
+  // -------------------------------------------------------------------------
+
+  /**
+   * Return all emails belonging to a thread, ordered oldest-first.
+   * @param threadId  The JMAP threadId (returned in EmailSummary or EmailDetail headers).
+   */
+  async getThread(threadId: string): Promise<EmailDetail[]> {
+    const accountId = await this.getAccountId();
+    const responses = await this.request([
+      [
+        "Email/query",
+        {
+          accountId,
+          filter: { threadId },
+          sort: [{ property: "receivedAt", isAscending: true }],
+        },
+        "tq1",
+      ],
+      [
+        "Email/get",
+        {
+          accountId,
+          "#ids": {
+            resultOf: "tq1",
+            name: "Email/query",
+            path: "/ids",
+          },
+          properties: [
+            "id",
+            "subject",
+            "from",
+            "to",
+            "receivedAt",
+            "hasAttachment",
+            "preview",
+            "mailboxIds",
+            "htmlBody",
+            "textBody",
+            "header:*:asText",
+          ],
+          fetchHTMLBodyValues: true,
+          fetchTextBodyValues: true,
+        },
+        "tg1",
+      ],
+    ]);
+
+    const getResponse = responses.find(([, , id]) => id === "tg1");
+    if (!getResponse) return [];
+    const list = (getResponse[1] as { list?: Record<string, unknown>[] }).list ?? [];
+    return list.map(rawToDetail);
+  }
+
+  // -------------------------------------------------------------------------
   // Public: delete email (move to Trash)
   // -------------------------------------------------------------------------
 

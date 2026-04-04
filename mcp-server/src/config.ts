@@ -35,4 +35,9 @@ export const config = {
     readOpsPerMinute: 200,
   },
   port: parseInt(process.env.PORT ?? "3000", 10),
+  redis: {
+    // Optional — when set, enables distributed rate limiting and idempotency.
+    // Leave empty in dev; set to a Memorystore Redis URL in production.
+    url: process.env.REDIS_URL ?? "",
+  },
 } as const;
