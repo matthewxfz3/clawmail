@@ -180,8 +180,8 @@ export async function toolUpdateEvent(params: {
   if (params.end)   validateIso(updated.end,   "end");
   if (new Date(updated.end) <= new Date(updated.start)) throw new Error("end must be after start");
 
-  // Delete old, create new (JMAP has no inline update for body content)
-  await client.deleteEmail(emailId);
+  // Permanently destroy old record, create new one
+  await client.destroyEmail(emailId);
   const subject = encodeSubject(updated.eventId, updated.title);
   await client.createSystemEmail(CALENDAR_MAILBOX, subject, JSON.stringify(updated, null, 2));
 
@@ -199,7 +199,7 @@ export async function toolDeleteEvent(params: {
   for (const item of items) {
     const parsed = parseSubject(item.subject);
     if (parsed?.eventId === params.event_id) {
-      await client.deleteEmail(item.id);
+      await client.destroyEmail(item.id);
       return { message: `Event ${params.event_id} deleted` };
     }
   }

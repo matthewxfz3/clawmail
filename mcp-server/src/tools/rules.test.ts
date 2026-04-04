@@ -7,6 +7,7 @@ vi.mock("../config.js", () => ({
 const mockClient = vi.hoisted(() => ({
   createSystemEmail: vi.fn(),
   listSystemEmails: vi.fn(),
+  destroyEmail: vi.fn(),
   deleteEmail: vi.fn(),
   moveEmail: vi.fn(),
   markEmailRead: vi.fn(),
@@ -41,6 +42,7 @@ beforeEach(() => {
   mockClient.createSystemEmail.mockResolvedValue("new-id");
   mockClient.listSystemEmails.mockResolvedValue([]);
   mockClient.listEmails.mockResolvedValue([]);
+  mockClient.destroyEmail.mockResolvedValue(undefined);
   mockClient.deleteEmail.mockResolvedValue(undefined);
   mockClient.moveEmail.mockResolvedValue(undefined);
   mockClient.markEmailRead.mockResolvedValue(undefined);
@@ -121,7 +123,7 @@ describe("toolDeleteRule", () => {
     mockClient.listSystemEmails.mockResolvedValue([makeRuleEmail("del-r", "Delete me")]);
     const result = await toolDeleteRule({ account: "agent@test.example.com", rule_id: "del-r" });
     expect(result.message).toContain("del-r");
-    expect(mockClient.deleteEmail).toHaveBeenCalledWith("email-del-r");
+    expect(mockClient.destroyEmail).toHaveBeenCalledWith("email-del-r");
   });
 
   it("throws when rule not found", async () => {
