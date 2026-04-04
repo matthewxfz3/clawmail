@@ -17,6 +17,12 @@ export const config = {
     // Optional — if set, send_event_invite auto-creates a Daily.co video room
     apiKey: process.env.DAILY_API_KEY ?? "",
   },
+  googleMeet: {
+    // Optional — if all three are set, send_event_invite creates a Google Meet space
+    clientId:     process.env.GOOGLE_MEET_CLIENT_ID     ?? "",
+    clientSecret: process.env.GOOGLE_MEET_CLIENT_SECRET ?? "",
+    refreshToken: process.env.GOOGLE_MEET_REFRESH_TOKEN ?? "",
+  },
   dashboard: {
     user: process.env.DASHBOARD_USER ?? "admin",
     password: process.env.DASHBOARD_PASSWORD ?? "",

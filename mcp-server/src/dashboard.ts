@@ -8,6 +8,7 @@ import { toolListEvents, type CalendarEvent } from "./tools/calendar.js";
 import { toolListRules, type RuleCondition, type RuleAction, type MailboxRule } from "./tools/rules.js";
 import { JmapClient } from "./clients/jmap.js";
 import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt } from "./metrics.js";
+import { buildAuthUrl, exchangeCode } from "./clients/google-meet.js";
 
 // ---------------------------------------------------------------------------
 // Session cookie — HMAC-SHA256 signed, 7-day expiry
@@ -177,10 +178,11 @@ function topbar(extra = ""): string {
 
 function tabBar(active: string): string {
   const tabs = [
-    { id: "overview", label: "Overview", href: "/dashboard" },
-    { id: "inboxes", label: "Inboxes", href: "/dashboard?tab=inboxes" },
-    { id: "metrics", label: "Metrics", href: "/dashboard?tab=metrics" },
-    { id: "calendars", label: "Calendars & Rules", href: "/dashboard?tab=calendars" },
+    { id: "overview",      label: "Overview",          href: "/dashboard" },
+    { id: "inboxes",       label: "Inboxes",            href: "/dashboard?tab=inboxes" },
+    { id: "metrics",       label: "Metrics",            href: "/dashboard?tab=metrics" },
+    { id: "calendars",     label: "Calendars & Rules",  href: "/dashboard?tab=calendars" },
+    { id: "integrations",  label: "⚙ Integrations",    href: "/dashboard?tab=integrations" },
   ];
   const links = tabs.map(t =>
     `<a href="${t.href}" class="${active === t.id ? "active" : ""}">${t.label}</a>`
@@ -1115,6 +1117,173 @@ async function buildEmailPage(account: string, emailId: string, folder = "Inbox"
 }
 
 // ---------------------------------------------------------------------------
+// Integrations page — Google Meet OAuth setup + Daily.co key setup
+// ---------------------------------------------------------------------------
+
+function encodeOAuthState(clientId: string, clientSecret: string): string {
+  const data = Buffer.from(JSON.stringify({ clientId, clientSecret, ts: Date.now() })).toString("base64url");
+  const sig = createHmac("sha256", effectivePassword()).update(data).digest("hex").slice(0, 20);
+  return `${data}.${sig}`;
+}
+
+function decodeOAuthState(state: string): { clientId: string; clientSecret: string } | null {
+  const dot = state.lastIndexOf(".");
+  if (dot === -1) return null;
+  const data = state.slice(0, dot);
+  const sig  = state.slice(dot + 1);
+  const expected = createHmac("sha256", effectivePassword()).update(data).digest("hex").slice(0, 20);
+  if (sig !== expected) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(data, "base64url").toString());
+    if (Date.now() - parsed.ts > 15 * 60 * 1000) return null; // 15-min expiry
+    return { clientId: parsed.clientId, clientSecret: parsed.clientSecret };
+  } catch { return null; }
+}
+
+function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | "err"; msg: string }): string {
+  const dailyConfigured  = config.daily.apiKey.length > 0;
+  const meetConfigured   = config.googleMeet.refreshToken.length > 0;
+  const meetCredsStored  = config.googleMeet.clientId.length > 0 && config.googleMeet.clientSecret.length > 0;
+
+  const flashHtml = flash
+    ? `<div style="margin-bottom:20px;padding:12px 16px;border-radius:8px;font-size:.88rem;font-weight:500;${flash.type === "ok" ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}">${flash.type === "ok" ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`
+    : "";
+
+  // ── Daily.co card ───────────────────────────────────────────────────────────
+  const dailyStatus = dailyConfigured
+    ? `<span class="badge ok">Connected</span>`
+    : `<span class="badge" style="background:#94a3b8">Not configured</span>`;
+
+  const maskedKey = dailyConfigured
+    ? `••••••••${config.daily.apiKey.slice(-6)}`
+    : "";
+
+  const dailyCard = `
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <h2 style="margin-bottom:4px">Daily.co</h2>
+          <div style="font-size:.82rem;color:#888">Instant video rooms — works without any Google account</div>
+        </div>
+        ${dailyStatus}
+      </div>
+      ${dailyConfigured ? `
+        <div style="display:flex;align-items:center;gap:12px;background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+          <span style="font-family:monospace;color:#555">${escHtml(maskedKey)}</span>
+          <span class="pill green" style="font-size:.75rem">Active</span>
+        </div>` : ""}
+      <div style="background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px">
+        <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:12px">${dailyConfigured ? "Update API key" : "Setup (free tier available at daily.co)"}</div>
+        <ol style="font-size:.83rem;color:#555;padding-left:18px;line-height:2">
+          <li>Sign up at <strong>daily.co</strong> → Settings → Developers → API keys → Create key</li>
+          <li>Run the commands below to store it:</li>
+        </ol>
+        <div class="code-block" style="margin-top:12px;font-size:.78rem">echo -n "YOUR_DAILY_API_KEY" | gcloud secrets ${dailyConfigured ? "versions add" : "create daily-api-key --data-file"} - --project=${escHtml(process.env.GOOGLE_CLOUD_PROJECT ?? "YOUR_PROJECT")}
+<br>
+gcloud run services update clawmail-mcp \\
+&nbsp; --region us-west1 \\
+&nbsp; --update-secrets=DAILY_API_KEY=daily-api-key:latest</div>
+      </div>
+    </div>`;
+
+  // ── Google Meet card ────────────────────────────────────────────────────────
+  const meetStatus = meetConfigured
+    ? `<span class="badge ok">Connected</span>`
+    : `<span class="badge" style="background:#94a3b8">Not connected</span>`;
+
+  const callbackUrl = `${serviceUrl}/dashboard/integrations/google/callback`;
+
+  const meetConnectedSection = meetConfigured ? `
+    <div style="display:flex;align-items:center;gap:12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+      <span style="font-size:1.1rem">✓</span>
+      <div>
+        <div style="font-size:.88rem;font-weight:600;color:#166534">Google Meet connected</div>
+        <div style="font-size:.78rem;color:#16a34a;margin-top:2px">Calendar invites will automatically include a Google Meet link</div>
+      </div>
+    </div>
+    <div style="font-size:.82rem;color:#666;margin-bottom:12px">To disconnect, remove the <code>GOOGLE_MEET_REFRESH_TOKEN</code> environment variable from Cloud Run.</div>` : "";
+
+  const step1 = `
+    <div style="margin-bottom:16px">
+      <div style="font-size:.82rem;font-weight:700;color:#1a1a2e;margin-bottom:8px">Step 1 — Enable the Google Meet API &amp; create OAuth credentials</div>
+      <ol style="font-size:.83rem;color:#555;padding-left:18px;line-height:2.2">
+        <li>The Meet API is already enabled in your GCP project ✓</li>
+        <li>Go to <a href="https://console.cloud.google.com/apis/credentials?project=${process.env.GOOGLE_CLOUD_PROJECT ?? ""}" target="_blank" style="color:#4f46e5">GCP Console → Credentials</a></li>
+        <li>Click <strong>Create Credentials → OAuth client ID</strong></li>
+        <li>Application type: <strong>Web application</strong></li>
+        <li>Add this Authorized redirect URI:<br>
+          <code style="background:#f1f5f9;padding:3px 8px;border-radius:4px;font-size:.82rem;color:#4f46e5">${escHtml(callbackUrl)}</code>
+        </li>
+        <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+      </ol>
+    </div>`;
+
+  const step2 = `
+    <div>
+      <div style="font-size:.82rem;font-weight:700;color:#1a1a2e;margin-bottom:8px">Step 2 — Enter credentials &amp; connect your Google account</div>
+      ${meetCredsStored ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px 12px;font-size:.81rem;color:#92400e;margin-bottom:12px">OAuth credentials already saved. Click Connect below to re-authorize, or update the credentials first.</div>` : ""}
+      <form method="POST" action="/dashboard/integrations/google/connect">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:.78rem;font-weight:600;color:#555;display:block;margin-bottom:4px">Client ID</label>
+            <input type="text" name="client_id" value="${escHtml(config.googleMeet.clientId)}" placeholder="123456789-abc.apps.googleusercontent.com"
+              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace">
+          </div>
+          <div>
+            <label style="font-size:.78rem;font-weight:600;color:#555;display:block;margin-bottom:4px">Client Secret</label>
+            <input type="password" name="client_secret" value="${escHtml(config.googleMeet.clientSecret)}" placeholder="GOCSPX-••••••••••••••"
+              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Connect Google Account →</button>
+        <div style="font-size:.78rem;color:#999;margin-top:8px">You'll be redirected to Google to authorize with your Google account.</div>
+      </form>
+    </div>`;
+
+  const meetSetupSection = meetConfigured ? "" : `
+    <div style="background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px">
+      ${step1}
+      ${step2}
+    </div>`;
+
+  const meetCard = `
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <h2 style="margin-bottom:4px">Google Meet</h2>
+          <div style="font-size:.82rem;color:#888">Auto-generate real Google Meet links (recognized natively by Google Calendar)</div>
+        </div>
+        ${meetStatus}
+      </div>
+      ${meetConnectedSection}
+      ${meetSetupSection}
+    </div>`;
+
+  // ── Priority note ───────────────────────────────────────────────────────────
+  const priorityNote = `
+    <div class="card" style="margin-bottom:20px;background:#f8fafb">
+      <h2>Video Link Priority</h2>
+      <div style="font-size:.85rem;color:#555;line-height:2;margin-top:8px">
+        When <code>send_event_invite</code> is called without an explicit <code>video_url</code>:<br>
+        <strong>1.</strong> Google Meet <span class="pill ${meetConfigured ? "green" : "gray"}">${meetConfigured ? "active" : "not configured"}</span> &nbsp;→&nbsp;
+        <strong>2.</strong> Daily.co <span class="pill ${dailyConfigured ? "green" : "gray"}">${dailyConfigured ? "active" : "not configured"}</span> &nbsp;→&nbsp;
+        <strong>3.</strong> No video link
+      </div>
+    </div>`;
+
+  return page("Integrations", `
+    ${topbar()}
+    ${tabBar("integrations")}
+    <div class="container">
+      ${flashHtml}
+      ${priorityNote}
+      ${meetCard}
+      ${dailyCard}
+    </div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
 // Main dashboard page (tab routing)
 // ---------------------------------------------------------------------------
 
@@ -1140,6 +1309,7 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "
   const activeTab = tab === "inboxes" ? "inboxes"
     : tab === "metrics" ? "metrics"
     : tab === "calendars" ? "calendars"
+    : tab === "integrations" ? "integrations"
     : "overview";
 
   return page("Dashboard", `
@@ -1308,6 +1478,112 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // ── Integrations routes ────────────────────────────────────────────────────
+
+  const proto2 = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
+  const host2  = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers["host"] ?? `localhost:${config.port}`;
+  const serviceUrl2 = `${proto2}://${host2}`;
+
+  // GET /dashboard/integrations (alias → tab=integrations)
+  if (path === "/dashboard/integrations") {
+    res.writeHead(302, { "Location": "/dashboard?tab=integrations" });
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/integrations/google/connect — build OAuth URL and redirect
+  if (path === "/dashboard/integrations/google/connect" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const clientId     = (form["client_id"] ?? "").trim();
+    const clientSecret = (form["client_secret"] ?? "").trim();
+    if (!clientId || !clientSecret) {
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent("Client ID and Client Secret are required") });
+      res.end();
+      return;
+    }
+    const state       = encodeOAuthState(clientId, clientSecret);
+    const redirectUri = `${serviceUrl2}/dashboard/integrations/google/callback`;
+    const authUrl     = buildAuthUrl(clientId, redirectUri, state);
+    res.writeHead(302, { "Location": authUrl });
+    res.end();
+    return;
+  }
+
+  // GET /dashboard/integrations/google/callback — exchange code for token
+  if (path === "/dashboard/integrations/google/callback") {
+    const code  = url.searchParams.get("code") ?? "";
+    const state = url.searchParams.get("state") ?? "";
+    const error = url.searchParams.get("error") ?? "";
+
+    if (error) {
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent(`Google authorization denied: ${error}`) });
+      res.end();
+      return;
+    }
+
+    const creds = decodeOAuthState(state);
+    if (!creds) {
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent("OAuth state invalid or expired — please try again") });
+      res.end();
+      return;
+    }
+
+    try {
+      const redirectUri = `${serviceUrl2}/dashboard/integrations/google/callback`;
+      const { refreshToken, email } = await exchangeCode({ code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri });
+
+      // Show the token + setup commands — admin stores it permanently
+      const gcpProject = process.env.GOOGLE_CLOUD_PROJECT ?? "YOUR_PROJECT";
+      const html = page("Google Meet Connected", `
+        ${topbar()}
+        ${tabBar("integrations")}
+        <div class="container">
+          <div class="card">
+            <div style="text-align:center;padding:12px 0 20px">
+              <div style="font-size:2rem;margin-bottom:8px">🎉</div>
+              <div style="font-size:1.1rem;font-weight:700;color:#166534">Authorized as ${escHtml(email)}</div>
+              <div style="font-size:.85rem;color:#888;margin-top:4px">Copy your refresh token and run the commands below to activate Google Meet.</div>
+            </div>
+
+            <div style="margin-bottom:20px">
+              <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">Your refresh token (copy this):</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <code id="token" style="flex:1;background:#f8fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;font-size:.78rem;word-break:break-all;color:#1a1a2e">${escHtml(refreshToken)}</code>
+                <button onclick="navigator.clipboard.writeText(document.getElementById('token').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)"
+                  class="btn btn-primary" style="white-space:nowrap;flex-shrink:0">Copy</button>
+              </div>
+            </div>
+
+            <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:8px">Run these commands to activate:</div>
+            <div class="code-block" style="font-size:.78rem">
+# Store credentials in Secret Manager
+echo -n "${escHtml(creds.clientId)}" | gcloud secrets create google-meet-client-id --data-file=- --project=${escHtml(gcpProject)}
+echo -n "${escHtml(creds.clientSecret)}" | gcloud secrets create google-meet-client-secret --data-file=- --project=${escHtml(gcpProject)}
+echo -n "PASTE_REFRESH_TOKEN_HERE" | gcloud secrets create google-meet-refresh-token --data-file=- --project=${escHtml(gcpProject)}
+
+# Update Cloud Run to use them
+gcloud run services update clawmail-mcp --region us-west1 --project=${escHtml(gcpProject)} \\
+  --update-secrets=GOOGLE_MEET_CLIENT_ID=google-meet-client-id:latest,\\
+GOOGLE_MEET_CLIENT_SECRET=google-meet-client-secret:latest,\\
+GOOGLE_MEET_REFRESH_TOKEN=google-meet-refresh-token:latest
+            </div>
+
+            <div style="margin-top:16px">
+              <a href="/dashboard?tab=integrations" class="btn btn-primary">← Back to Integrations</a>
+            </div>
+          </div>
+        </div>
+      `);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+    } catch (e) {
+      res.writeHead(302, { "Location": "/dashboard?tab=integrations&err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)) });
+      res.end();
+    }
+    return;
+  }
+
   // GET /dashboard (main tabbed view)
   const tab = url.searchParams.get("tab") ?? "overview";
   const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
@@ -1317,6 +1593,17 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   let flash: { type: "ok" | "err"; msg: string } | undefined;
   if (url.searchParams.get("sent") === "1") flash = { type: "ok", msg: "Test email sent successfully." };
   else if (url.searchParams.get("err")) flash = { type: "err", msg: url.searchParams.get("err")! };
+
+  if (tab === "integrations") {
+    const flashMsg = url.searchParams.get("err")
+      ? { type: "err" as const, msg: url.searchParams.get("err")! }
+      : url.searchParams.get("ok")
+      ? { type: "ok" as const, msg: url.searchParams.get("ok")! }
+      : undefined;
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(buildIntegrationsPage(serviceUrl2, flashMsg));
+    return;
+  }
 
   const html = await buildDashboard(serviceUrl, tab, flash);
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
