@@ -2,7 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { config } from "./config.js";
 import { toolListAccounts } from "./tools/accounts.js";
-import { toolListEmails, toolReadEmail, toolDeleteEmail } from "./tools/mailbox.js";
+import { toolListEmails, toolReadEmail, toolDeleteEmail, toolMarkAsRead, toolMarkAsUnread, toolFlagEmail } from "./tools/mailbox.js";
+import { toolMoveEmail, toolListFolders } from "./tools/folders.js";
 import { toolSendEmail } from "./tools/send.js";
 import { toolListEvents, type CalendarEvent } from "./tools/calendar.js";
 import { toolListRules, type RuleCondition, type RuleAction, type MailboxRule } from "./tools/rules.js";
@@ -533,8 +534,31 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
     <div class="metric-card"><div class="metric-big" style="color:${m.totalErrors > 0 ? "#dc2626" : "#22c55e"}">${m.totalErrors}</div><div class="metric-label">Total errors</div></div>
   `;
 
-  // Tool breakdown table
-  const TOOLS = ["create_account", "list_accounts", "delete_account", "list_emails", "read_email", "delete_email", "search_emails", "send_email"];
+  // Tool breakdown table — all 45 tools
+  const TOOLS = [
+    // Account management
+    "create_account", "list_accounts", "delete_account",
+    // Mailbox
+    "list_emails", "read_email", "delete_email", "search_emails",
+    "mark_as_read", "mark_as_unread", "flag_email",
+    // Folders
+    "list_folders", "create_folder", "delete_folder", "move_email",
+    // Bulk
+    "bulk_move_emails", "bulk_delete_emails", "bulk_add_label",
+    // Send
+    "send_email", "reply_to_email", "forward_email", "send_event_invite", "cancel_event_invite",
+    // Calendar
+    "create_event", "list_events", "get_event", "update_event", "delete_event", "check_availability",
+    // Spam
+    "mark_as_spam", "mark_as_not_spam",
+    // Rules
+    "create_rule", "list_rules", "delete_rule", "apply_rules",
+    // Filters
+    "add_to_whitelist", "remove_from_whitelist", "list_whitelist",
+    "add_to_blacklist", "remove_from_blacklist", "list_blacklist", "apply_spam_filter",
+    // Labels
+    "add_label", "remove_label", "list_labels", "search_by_label",
+  ];
   const toolRows = TOOLS.map(tool => {
     const t = m.tools[tool] ?? { calls: 0, errors: 0, rateLimitHits: 0, lastCalledAt: null };
     const errRate = t.calls > 0 ? `${((t.errors / t.calls) * 100).toFixed(1)}%` : "—";
@@ -566,7 +590,7 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
   return `
     <div class="card">
       <h2>System snapshot</h2>
-      <div class="metric-grid">${procCards}</div>
+      <div class="metric-grid">${procCards}<div class="metric-card"><div class="metric-big" style="color:#4f46e5">${TOOLS.length}</div><div class="metric-label">Tools available</div></div></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <span>MCP Server <span class="pill green">Online</span></span>
         <span>Stalwart <span class="pill ${stalwartOk ? "green" : "red"}">${stalwartOk ? "Online" : "Unreachable"}</span></span>
@@ -1080,10 +1104,16 @@ async function buildInboxPage(account: string, folder = "Inbox"): Promise<string
 // ---------------------------------------------------------------------------
 
 async function buildEmailPage(account: string, emailId: string, folder = "Inbox"): Promise<string> {
-  const email = await toolReadEmail(account, emailId);
+  const [email, foldersResult] = await Promise.all([
+    toolReadEmail(account, emailId),
+    toolListFolders({ account }).catch(() => ({ folders: [], count: 0 })),
+  ]);
   const date = new Date(email.receivedAt).toLocaleString();
   const body = email.textBody ?? email.htmlBody ?? "(no body)";
   const isHtml = !email.textBody && !!email.htmlBody;
+  const folderOptions = foldersResult.folders
+    .map(f => `<option value="${escHtml(f.name)}"${f.name === folder ? " selected" : ""}>${escHtml(f.name)}</option>`)
+    .join("");
 
   const bodyHtml = isHtml
     ? `<iframe srcdoc="${escHtml(body)}" sandbox="allow-same-origin" style="width:100%;min-height:400px;border:none;border-radius:8px" title="Email body"></iframe>`
@@ -1105,11 +1135,45 @@ async function buildEmailPage(account: string, emailId: string, folder = "Inbox"
           ${email.hasAttachment ? `<div class="email-meta-row"><span class="email-meta-label">Attach</span><span class="attach-icon">📎 Has attachment</span></div>` : ""}
         </div>
         ${bodyHtml}
-        <div style="margin-top:20px">
+        <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <form method="POST" action="/dashboard/action/mark-read" style="display:inline">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="id" value="${escHtml(emailId)}">
+            <input type="hidden" name="folder" value="${escHtml(folder)}">
+            <button type="submit" class="btn" style="background:#f1f5f9;color:#475569;font-size:.83rem">✓ Mark read</button>
+          </form>
+          <form method="POST" action="/dashboard/action/mark-unread" style="display:inline">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="id" value="${escHtml(emailId)}">
+            <input type="hidden" name="folder" value="${escHtml(folder)}">
+            <button type="submit" class="btn" style="background:#f1f5f9;color:#475569;font-size:.83rem">○ Mark unread</button>
+          </form>
+          <form method="POST" action="/dashboard/action/flag-email" style="display:inline">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="id" value="${escHtml(emailId)}">
+            <input type="hidden" name="folder" value="${escHtml(folder)}">
+            <input type="hidden" name="flagged" value="true">
+            <button type="submit" class="btn" style="background:#fef9c3;color:#854d0e;font-size:.83rem">⭐ Flag</button>
+          </form>
+          <form method="POST" action="/dashboard/action/flag-email" style="display:inline">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="id" value="${escHtml(emailId)}">
+            <input type="hidden" name="folder" value="${escHtml(folder)}">
+            <input type="hidden" name="flagged" value="false">
+            <button type="submit" class="btn" style="background:#f1f5f9;color:#6b7280;font-size:.83rem">☆ Unflag</button>
+          </form>
+          <form method="POST" action="/dashboard/action/move-email" style="display:inline;display:flex;align-items:center;gap:4px">
+            <input type="hidden" name="a" value="${escHtml(account)}">
+            <input type="hidden" name="id" value="${escHtml(emailId)}">
+            <select name="folder" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.83rem;color:#374151">
+              ${folderOptions}
+            </select>
+            <button type="submit" class="btn" style="background:#f1f5f9;color:#475569;font-size:.83rem">→ Move</button>
+          </form>
           <form method="POST" action="/dashboard/action/delete-email" style="display:inline">
             <input type="hidden" name="a" value="${escHtml(account)}">
             <input type="hidden" name="id" value="${escHtml(emailId)}">
-            <button type="submit" class="btn btn-danger" onclick="return confirm('Move to Trash?')">🗑 Move to Trash</button>
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Move to Trash?')" style="font-size:.83rem">🗑 Trash</button>
           </form>
         </div>
       </div>
@@ -1443,10 +1507,64 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     const form = parseFormBody(body);
     const account = form["a"] ?? "";
     const emailId = form["id"] ?? "";
+    const returnFolder = form["folder"] ?? "Inbox";
     try {
       await toolDeleteEmail(account, emailId);
     } catch { /* ignore — redirect anyway */ }
-    res.writeHead(302, { "Location": `/dashboard/inbox?a=${encodeURIComponent(account)}` });
+    res.writeHead(302, { "Location": `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(returnFolder)}` });
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/mark-read
+  if (path === "/dashboard/action/mark-read" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = form["a"] ?? "";
+    const emailId = form["id"] ?? "";
+    const returnFolder = form["folder"] ?? "Inbox";
+    try { await toolMarkAsRead(account, emailId); } catch { /* ignore */ }
+    res.writeHead(302, { "Location": `/dashboard/email?a=${encodeURIComponent(account)}&id=${encodeURIComponent(emailId)}&folder=${encodeURIComponent(returnFolder)}` });
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/mark-unread
+  if (path === "/dashboard/action/mark-unread" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = form["a"] ?? "";
+    const emailId = form["id"] ?? "";
+    const returnFolder = form["folder"] ?? "Inbox";
+    try { await toolMarkAsUnread(account, emailId); } catch { /* ignore */ }
+    res.writeHead(302, { "Location": `/dashboard/email?a=${encodeURIComponent(account)}&id=${encodeURIComponent(emailId)}&folder=${encodeURIComponent(returnFolder)}` });
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/flag-email
+  if (path === "/dashboard/action/flag-email" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = form["a"] ?? "";
+    const emailId = form["id"] ?? "";
+    const returnFolder = form["folder"] ?? "Inbox";
+    const flagged = form["flagged"] === "true";
+    try { await toolFlagEmail(account, emailId, flagged); } catch { /* ignore */ }
+    res.writeHead(302, { "Location": `/dashboard/email?a=${encodeURIComponent(account)}&id=${encodeURIComponent(emailId)}&folder=${encodeURIComponent(returnFolder)}` });
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/move-email
+  if (path === "/dashboard/action/move-email" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = form["a"] ?? "";
+    const emailId = form["id"] ?? "";
+    const targetFolder = form["folder"] ?? "Inbox";
+    try { await toolMoveEmail({ account, email_id: emailId, folder: targetFolder }); } catch { /* ignore */ }
+    res.writeHead(302, { "Location": `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=${encodeURIComponent(targetFolder)}` });
     res.end();
     return;
   }
