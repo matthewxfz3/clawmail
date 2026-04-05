@@ -187,6 +187,33 @@ const CSS = `
   details.cal-event.cal-past{background:#f1f5f9}
   details.cal-event.cal-past summary{color:#64748b}
   .cal-detail{padding:6px 8px;border-top:1px solid rgba(0,0,0,.08);background:#fff;font-size:.77rem;line-height:1.5;color:#374151}
+  /* Week view */
+  .week-container{border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-top:4px}
+  .week-head{display:grid;grid-template-columns:52px repeat(7,1fr);background:#f8f9fa;border-bottom:2px solid #e5e7eb;position:sticky;top:0;z-index:20}
+  .week-head-cell{padding:7px 4px;text-align:center;font-size:.78rem;border-left:1px solid #e5e7eb;line-height:1.4}
+  .week-head-cell:first-child{border-left:none}
+  .week-head-cell.week-today-hd{background:#ede9fe;color:#4f46e5;font-weight:700}
+  .week-scroll{overflow-y:auto;max-height:580px}
+  .week-body{display:grid;grid-template-columns:52px repeat(7,1fr);position:relative}
+  .week-time-col{display:flex;flex-direction:column;background:#fafafa;border-right:1px solid #e5e7eb}
+  .week-time-label{height:48px;padding:3px 6px 0 0;text-align:right;font-size:.68rem;color:#aaa;flex-shrink:0}
+  .week-day-col{position:relative;min-height:1152px;border-left:1px solid #e5e7eb}
+  .week-day-col.week-today-col{background:#fdfcff}
+  .week-hr{position:absolute;left:0;right:0;border-top:1px solid #f0f0f0;pointer-events:none}
+  .week-hr.major{border-top-color:#e5e7eb}
+  details.week-ev{position:absolute;border-radius:4px;overflow:hidden;font-size:.72rem;cursor:pointer;background:#dbeafe;border-left:3px solid #3b82f6;padding:2px 4px;z-index:1}
+  details.week-ev summary{list-style:none;font-weight:500;color:#1d4ed8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  details.week-ev summary::-webkit-details-marker{display:none}
+  details.week-ev[open]{z-index:10;overflow:visible}
+  details.week-ev[open] summary{white-space:normal}
+  details.week-ev.past{background:#f1f5f9;border-left-color:#94a3b8}
+  details.week-ev.past summary{color:#64748b}
+  .week-ev-detail{margin-top:3px;color:#374151;font-size:.71rem;line-height:1.4;background:#fff;border-radius:0 0 3px 3px;padding:4px;border-top:1px solid rgba(0,0,0,.08)}
+  .week-now-line{position:absolute;left:0;right:0;height:0;border-top:2px solid #ef4444;z-index:5;pointer-events:none}
+  .week-now-dot{position:absolute;left:-5px;top:-5px;width:9px;height:9px;background:#ef4444;border-radius:50%}
+  .view-toggle{display:flex;gap:4px;margin-bottom:14px}
+  .view-toggle a{padding:5px 16px;border-radius:6px;font-size:.82rem;font-weight:500;text-decoration:none;border:1px solid #e5e7eb;color:#555;background:#fff}
+  .view-toggle a.active{background:#4f46e5;color:#fff;border-color:#4f46e5}
 `;
 
 function page(title: string, body: string): string {
@@ -1015,11 +1042,13 @@ async function buildCalendarsTab(accounts: Array<{ email: string; name: string }
 // Sub-page: Account calendar
 // ---------------------------------------------------------------------------
 
-async function buildAccountCalendarPage(account: string, month?: string): Promise<string> {
+async function buildAccountCalendarPage(account: string, month?: string, view?: string, week?: string): Promise<string> {
   const now = new Date();
+  const isWeek  = view === "week";
   const monthStr = month && /^\d{4}-\d{2}$/.test(month)
     ? month
     : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const weekStr  = week ?? now.toISOString().slice(0, 10);
 
   const client = new JmapClient(account);
   const [eventsResult, mailboxesResult] = await Promise.allSettled([
@@ -1031,9 +1060,17 @@ async function buildAccountCalendarPage(account: string, month?: string): Promis
   const fetchError = eventsResult.status === "rejected" ? String(eventsResult.reason) : null;
   const mailboxes = mailboxesResult.status === "fulfilled" ? mailboxesResult.value : [];
 
+  const base = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar`;
+  const toggleHtml = `<div class="view-toggle">
+    <a href="${base}&month=${monthStr}"${!isWeek ? ` class="active"` : ""}>Month</a>
+    <a href="${base}&view=week&week=${weekStr}"${isWeek ? ` class="active"` : ""}>Week</a>
+  </div>`;
+
   const gridOrError = fetchError
     ? `<div style="padding:24px;color:#dc2626">Failed to load events: ${escHtml(fetchError)}</div>`
-    : buildCalendarGrid(events, monthStr, account);
+    : isWeek
+      ? buildWeekView(events, weekStr, account)
+      : buildCalendarGrid(events, monthStr, account);
 
   return page(`Calendar — ${account}`, `
     ${topbar()}
@@ -1046,6 +1083,7 @@ async function buildAccountCalendarPage(account: string, month?: string): Promis
       </div>
       <div class="card" style="padding:20px">
         ${buildFolderTabBar(account, mailboxes, "__calendar")}
+        ${toggleHtml}
         ${gridOrError}
       </div>
     </div>
@@ -1117,9 +1155,9 @@ async function buildAccountRulesPage(account: string): Promise<string> {
 // Sub-page: Account inbox
 // ---------------------------------------------------------------------------
 
-async function buildInboxPage(account: string, folder = "Inbox", month?: string): Promise<string> {
+async function buildInboxPage(account: string, folder = "Inbox", month?: string, view?: string, week?: string): Promise<string> {
   // Pseudo-folder interception for calendar and rules views
-  if (folder === "__calendar") return buildAccountCalendarPage(account, month);
+  if (folder === "__calendar") return buildAccountCalendarPage(account, month, view, week);
   if (folder === "__rules")    return buildAccountRulesPage(account);
 
   const client = new JmapClient(account);
@@ -1836,6 +1874,161 @@ function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: s
 }
 
 // ---------------------------------------------------------------------------
+// Calendar week view helper
+// ---------------------------------------------------------------------------
+
+function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: string): string {
+  const HOUR_PX = 48;
+  const now = new Date();
+
+  // Normalise anchor → Monday of that week
+  let anchor = new Date(weekDateStr + "T12:00:00");
+  if (isNaN(anchor.getTime())) anchor = new Date();
+  const dow = (anchor.getDay() + 6) % 7; // 0=Mon
+  const monday = new Date(anchor);
+  monday.setDate(anchor.getDate() - dow);
+  monday.setHours(0, 0, 0, 0);
+
+  const days: Date[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+
+  // Map each event to the days of this week it falls on
+  const byDay = new Map<string, CalendarEvent[]>();
+  for (const d of days) byDay.set(d.toISOString().slice(0, 10), []);
+  for (const ev of events) {
+    const evStart = new Date(ev.start);
+    const evEnd   = new Date(ev.end);
+    for (const d of days) {
+      const dayStart = new Date(d); dayStart.setHours(0, 0, 0, 0);
+      const dayEnd   = new Date(d); dayEnd.setHours(23, 59, 59, 999);
+      if (evStart <= dayEnd && evEnd >= dayStart) {
+        byDay.get(d.toISOString().slice(0, 10))!.push(ev);
+      }
+    }
+  }
+
+  // Header row
+  const todayStr = now.toISOString().slice(0, 10);
+  const dayHeaders = days.map(d => {
+    const ds = d.toISOString().slice(0, 10);
+    const isToday = ds === todayStr;
+    const dayName = d.toLocaleString("default", { weekday: "short" });
+    const dayNum  = d.getDate();
+    const numHtml = isToday
+      ? `<span style="background:#4f46e5;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem">${dayNum}</span>`
+      : `<span style="font-weight:600;font-size:.88rem">${dayNum}</span>`;
+    return `<div class="week-head-cell${isToday ? " week-today-hd" : ""}">${escHtml(dayName)}<br>${numHtml}</div>`;
+  }).join("");
+
+  // Time labels (left gutter)
+  const timeLabels = Array.from({ length: 24 }, (_, h) => {
+    const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+    return `<div class="week-time-label">${escHtml(label)}</div>`;
+  }).join("");
+
+  // Hour grid lines (reused per column)
+  const hourLines = Array.from({ length: 24 }, (_, h) =>
+    `<div class="week-hr${h % 1 === 0 ? " major" : ""}" style="top:${h * HOUR_PX}px"></div>`
+  ).join("");
+
+  // Current-time line (today column only)
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const nowTop  = Math.round((nowMins / 60) * HOUR_PX);
+
+  // Build one day column with event blocks
+  function renderDayCol(d: Date): string {
+    const ds       = d.toISOString().slice(0, 10);
+    const isToday  = ds === todayStr;
+    const dayEvs   = byDay.get(ds) ?? [];
+    const dayStart = new Date(d); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd   = new Date(d); dayEnd.setHours(23, 59, 59, 999);
+
+    // Lane assignment for overlap handling
+    type Slot = { startMins: number; endMins: number; lane: number; ev: CalendarEvent };
+    const slots: Slot[] = dayEvs.map(ev => {
+      const cs = new Date(ev.start) < dayStart ? dayStart : new Date(ev.start);
+      const ce = new Date(ev.end)   > dayEnd   ? dayEnd   : new Date(ev.end);
+      const startMins = cs.getHours() * 60 + cs.getMinutes();
+      const endMins   = Math.max(startMins + 15, ce.getHours() * 60 + ce.getMinutes());
+      return { startMins, endMins, lane: -1, ev };
+    });
+    slots.sort((a, b) => a.startMins - b.startMins);
+
+    const laneEnds: number[] = [];
+    for (const s of slots) {
+      let lane = laneEnds.findIndex(e => e <= s.startMins);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(s.endMins); }
+      else laneEnds[lane] = s.endMins;
+      s.lane = lane;
+    }
+    const numLanes = Math.max(1, laneEnds.length);
+
+    const evBlocks = slots.map(({ ev, startMins, endMins, lane }) => {
+      const top    = Math.round((startMins / 60) * HOUR_PX);
+      const height = Math.round(((endMins - startMins) / 60) * HOUR_PX);
+      const leftPct  = numLanes > 1 ? (lane / numLanes) * 96 + 1 : 1;
+      const widthStr = numLanes > 1 ? `${96 / numLanes}%` : "calc(100% - 2px)";
+      const isPast   = new Date(ev.end) < now;
+      const timeStr  = new Date(ev.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const endStr   = new Date(ev.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const descHtml = ev.description ? `<div style="margin-top:2px;color:#555">${escHtml(ev.description.slice(0, 100))}</div>` : "";
+      const attHtml  = ev.attendees?.length ? `<div style="color:#888;margin-top:2px">👤 ${escHtml(ev.attendees.slice(0, 3).join(", "))}</div>` : "";
+      return `<details class="week-ev${isPast ? " past" : ""}" style="top:${top}px;min-height:${height}px;left:${leftPct.toFixed(1)}%;width:${widthStr}">
+        <summary>${escHtml(timeStr)} ${escHtml(ev.title)}</summary>
+        <div class="week-ev-detail">
+          <strong>${escHtml(ev.title)}</strong><br>
+          <span style="color:#888">${escHtml(timeStr)} – ${escHtml(endStr)}</span>
+          ${descHtml}${attHtml}
+        </div>
+      </details>`;
+    }).join("");
+
+    const nowLine = isToday
+      ? `<div class="week-now-line" style="top:${nowTop}px"><span class="week-now-dot"></span></div>`
+      : "";
+
+    return `<div class="week-day-col${isToday ? " week-today-col" : ""}">${hourLines}${nowLine}${evBlocks}</div>`;
+  }
+
+  const dayCols = days.map(renderDayCol).join("");
+
+  // Nav
+  const prevMonday = new Date(monday); prevMonday.setDate(monday.getDate() - 7);
+  const nextMonday = new Date(monday); nextMonday.setDate(monday.getDate() + 7);
+  const prevStr    = prevMonday.toISOString().slice(0, 10);
+  const nextStr    = nextMonday.toISOString().slice(0, 10);
+  const base       = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar`;
+  const weekLabel  = `${monday.toLocaleDateString("default", { month: "short", day: "numeric" })} – ${days[6].toLocaleDateString("default", { month: "short", day: "numeric", year: "numeric" })}`;
+
+  const scrollId  = `ws${monday.getTime()}`;
+  const scrollTop = Math.round(8 * HOUR_PX); // scroll to 8 AM by default
+
+  return `
+    <div class="cal-nav">
+      <a href="${base}&view=week&week=${prevStr}">‹ Prev</a>
+      <strong>${escHtml(weekLabel)}</strong>
+      <a href="${base}&view=week&week=${nextStr}">Next ›</a>
+    </div>
+    <div class="week-container">
+      <div class="week-head">
+        <div class="week-head-cell" style="background:#fafafa"></div>
+        ${dayHeaders}
+      </div>
+      <div class="week-scroll" id="${escHtml(scrollId)}">
+        <div class="week-body">
+          <div class="week-time-col">${timeLabels}</div>
+          ${dayCols}
+        </div>
+      </div>
+    </div>
+    <script>document.getElementById(${JSON.stringify(scrollId)}).scrollTop=${scrollTop};</script>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Main dashboard page (tab routing)
 // ---------------------------------------------------------------------------
 
@@ -2058,13 +2251,15 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     const account = url.searchParams.get("a") ?? "";
     const folder = url.searchParams.get("folder") ?? "Inbox";
     const month = url.searchParams.get("month") ?? undefined;
+    const view  = url.searchParams.get("view")  ?? undefined;
+    const week  = url.searchParams.get("week")  ?? undefined;
     if (!account) {
       res.writeHead(302, { "Location": "/dashboard?tab=inboxes" });
       res.end();
       return;
     }
     try {
-      const html = await buildInboxPage(account, folder, month);
+      const html = await buildInboxPage(account, folder, month, view, week);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
     } catch (e) {
