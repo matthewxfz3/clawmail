@@ -22,8 +22,10 @@ import type { AddressInfo } from "node:net";
 
 // --- config -----------------------------------------------------------------
 vi.mock("../config.js", () => {
-  const adminIdentity = { apiKey: "test-key-1", role: "admin" as const };
-  const userIdentity = { apiKey: "user-key-1", role: "user" as const, account: "alice@test.example.com" };
+  type Identity = { apiKey: string; role: string; account?: string };
+  const apiKeyMap = new Map<string, Identity>();
+  apiKeyMap.set("test-key-1", { apiKey: "test-key-1", role: "admin" });
+  apiKeyMap.set("user-key-1", { apiKey: "user-key-1", role: "user", account: "alice@test.example.com" });
   return {
   config: {
     domain: "test.example.com",
@@ -38,10 +40,7 @@ vi.mock("../config.js", () => {
     },
     auth: {
       apiKeys: new Set(["test-key-1"]),
-      apiKeyMap: new Map([
-        ["test-key-1", adminIdentity],
-        ["user-key-1", userIdentity],
-      ]),
+      apiKeyMap,
     },
     daily: { apiKey: "" },
     googleMeet: { clientId: "", clientSecret: "", refreshToken: "" },
