@@ -17,6 +17,7 @@ locals {
     "sendgrid-api-key"        = var.sendgrid_api_key
     "db-password"             = var.db_password
     "mcp-api-key"             = var.mcp_api_key
+    "mcp-api-key-map"         = var.mcp_api_key_map
     "dashboard-password"      = var.dashboard_password
   }
 }

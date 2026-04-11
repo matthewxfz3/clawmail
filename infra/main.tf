@@ -65,9 +65,16 @@ variable "db_password" {
 }
 
 variable "mcp_api_key" {
-  description = "API key used by the MCP Cloud Run service"
+  description = "API key used by the MCP Cloud Run service (legacy, all keys admin)"
   type        = string
   sensitive   = true
+}
+
+variable "mcp_api_key_map" {
+  description = "JSON array mapping API keys to roles and accounts, e.g. [{\"key\":\"k\",\"role\":\"admin\"}]"
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "dashboard_password" {
