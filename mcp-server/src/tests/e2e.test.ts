@@ -21,7 +21,10 @@ import type { AddressInfo } from "node:net";
 // ---------------------------------------------------------------------------
 
 // --- config -----------------------------------------------------------------
-vi.mock("../config.js", () => ({
+vi.mock("../config.js", () => {
+  const adminIdentity = { apiKey: "test-key-1", role: "admin" as const };
+  const userIdentity = { apiKey: "user-key-1", role: "user" as const, account: "alice@test.example.com" };
+  return {
   config: {
     domain: "test.example.com",
     stalwart: {
@@ -35,6 +38,10 @@ vi.mock("../config.js", () => ({
     },
     auth: {
       apiKeys: new Set(["test-key-1"]),
+      apiKeyMap: new Map([
+        ["test-key-1", adminIdentity],
+        ["user-key-1", userIdentity],
+      ]),
     },
     daily: { apiKey: "" },
     googleMeet: { clientId: "", clientSecret: "", refreshToken: "" },
@@ -48,7 +55,8 @@ vi.mock("../config.js", () => ({
     port: 0, // random port — OS assigns one
     redis: { url: "" },
   },
-}));
+};
+});
 
 // --- metrics (no-ops) -------------------------------------------------------
 vi.mock("../metrics.js", () => ({
@@ -1388,5 +1396,100 @@ describe("HTTP routing", () => {
       body: "{}",
     });
     expect(res.status).toBe(405);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Authorization — permission levels (admin vs user keys)
+// ---------------------------------------------------------------------------
+
+const USER_KEY = "user-key-1"; // bound to alice@test.example.com
+
+describe("Authorization", () => {
+  describe("admin-only tools", () => {
+    it("admin key can call list_accounts", async () => {
+      mockStalwart.listAccounts.mockResolvedValue([]);
+      const result = await callTool("list_accounts", {}, TEST_KEY);
+      expect(result.ok).toBe(true);
+    });
+
+    it("user key is denied list_accounts", async () => {
+      const { rpc } = await mcpPost(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_accounts", arguments: {} } },
+        USER_KEY,
+      );
+      const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
+      expect(content?.isError).toBe(true);
+      expect(content?.content?.[0]?.text).toMatch(/admin/i);
+    });
+
+    it("user key is denied create_account", async () => {
+      const { rpc } = await mcpPost(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_account", arguments: { local_part: "bob" } } },
+        USER_KEY,
+      );
+      const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
+      expect(content?.isError).toBe(true);
+      expect(content?.content?.[0]?.text).toMatch(/admin/i);
+    });
+
+    it("user key is denied delete_account", async () => {
+      const { rpc } = await mcpPost(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "delete_account", arguments: { local_part: "bob" } } },
+        USER_KEY,
+      );
+      const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
+      expect(content?.isError).toBe(true);
+      expect(content?.content?.[0]?.text).toMatch(/admin/i);
+    });
+  });
+
+  describe("account-scoped tools", () => {
+    it("user key can access own account (list_emails)", async () => {
+      mockJmap.listEmails.mockResolvedValue([]);
+      const result = await callTool("list_emails", { account: "alice@test.example.com" }, USER_KEY);
+      expect(result.ok).toBe(true);
+    });
+
+    it("user key is denied access to other account (list_emails)", async () => {
+      const { rpc } = await mcpPost(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_emails", arguments: { account: "bob@test.example.com" } } },
+        USER_KEY,
+      );
+      const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
+      expect(content?.isError).toBe(true);
+      expect(content?.content?.[0]?.text).toMatch(/permission denied/i);
+    });
+
+    it("user key can send_email from own account (local part)", async () => {
+      const result = await callTool("send_email", {
+        from_account: "alice",
+        to: "bob@example.com",
+        subject: "Test",
+        body: "Hello",
+      }, USER_KEY);
+      expect(result.ok).toBe(true);
+    });
+
+    it("user key is denied send_email from other account", async () => {
+      const { rpc } = await mcpPost(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "send_email", arguments: {
+          from_account: "bob",
+          to: "carol@example.com",
+          subject: "Test",
+          body: "Hello",
+        } } },
+        USER_KEY,
+      );
+      const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
+      expect(content?.isError).toBe(true);
+      expect(content?.content?.[0]?.text).toMatch(/permission denied/i);
+    });
+
+    it("admin key can access any account", async () => {
+      mockJmap.listEmails.mockResolvedValue([]);
+      const result = await callTool("list_emails", { account: "anyone@test.example.com" }, TEST_KEY);
+      expect(result.ok).toBe(true);
+    });
   });
 });
