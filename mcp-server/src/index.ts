@@ -225,6 +225,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       limit: z.number().int().min(1).max(100).optional().describe("Maximum number of emails to return (1-100, default: 20)"),
     },
     async (args) => {
+      const denied = authorize(caller, "list_emails", args.account);
+      if (denied) return denied;
       recordCall("list_emails");
       if (!checkRateLimit("list_emails", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("list_emails");
@@ -248,6 +250,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       email_id: z.string().describe("The JMAP email ID"),
     },
     async (args) => {
+      const denied = authorize(caller, "read_email", args.account);
+      if (denied) return denied;
       recordCall("read_email");
       if (!checkRateLimit("read_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("read_email");
@@ -272,6 +276,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       include_spam: z.boolean().optional().describe("Include Junk/spam folder in results (default: false)"),
     },
     async (args) => {
+      const denied = authorize(caller, "search_emails", args.account);
+      if (denied) return denied;
       recordCall("search_emails");
       if (!checkRateLimit("search_emails", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("search_emails");
@@ -300,6 +306,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       idempotency_key: z.string().optional().describe("Unique key to prevent duplicate sends on retry. Results are cached for 24h."),
     },
     async (args) => {
+      const denied = authorize(caller, "send_email", normalizeAccount(args.from_account, config.domain));
+      if (denied) return denied;
       recordCall("send_email");
       if (args.idempotency_key) {
         const cached = idempotencyCheck(args.idempotency_key);
@@ -340,6 +348,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       video_url: z.string().optional().describe("Explicit video call URL to embed (overrides Daily.co auto-creation)"),
     },
     async (args) => {
+      const denied = authorize(caller, "send_event_invite", normalizeAccount(args.from_account, config.domain));
+      if (denied) return denied;
       recordCall("send_event_invite");
       if (!checkRateLimit("send_event_invite", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("send_event_invite");
@@ -373,6 +383,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       sequence: z.number().int().min(1).optional().describe("Sequence number (default: 1). Increment if sending multiple cancellation updates for the same UID."),
     },
     async (args) => {
+      const denied = authorize(caller, "cancel_event_invite", normalizeAccount(args.from_account, config.domain));
+      if (denied) return denied;
       recordCall("cancel_event_invite");
       if (!checkRateLimit("cancel_event_invite", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("cancel_event_invite");
@@ -402,6 +414,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       idempotency_key: z.string().optional().describe("Unique key to prevent duplicate sends on retry. Results are cached for 24h."),
     },
     async (args) => {
+      const denied = authorize(caller, "reply_to_email", normalizeAccount(args.from_account, config.domain));
+      if (denied) return denied;
       recordCall("reply_to_email");
       if (args.idempotency_key) {
         const cached = idempotencyCheck(args.idempotency_key);
@@ -438,6 +452,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       idempotency_key: z.string().optional().describe("Unique key to prevent duplicate sends on retry. Results are cached for 24h."),
     },
     async (args) => {
+      const denied = authorize(caller, "forward_email", normalizeAccount(args.from_account, config.domain));
+      if (denied) return denied;
       recordCall("forward_email");
       if (args.idempotency_key) {
         const cached = idempotencyCheck(args.idempotency_key);
@@ -478,6 +494,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       label:     z.string().optional().describe("Label name — required for action='add_label' or 'remove_label'"),
     },
     async (args) => {
+      const denied = authorize(caller, "update_email", args.account);
+      if (denied) return denied;
       recordCall("update_email");
       if (!checkRateLimit("update_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("update_email");
@@ -541,6 +559,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       as:       z.enum(["spam", "not_spam"]).describe("'spam' moves to Junk; 'not_spam' moves to Inbox"),
     },
     async (args) => {
+      const denied = authorize(caller, "classify_email", args.account);
+      if (denied) return denied;
       recordCall("classify_email");
       if (!checkRateLimit("classify_email", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("classify_email");
@@ -571,6 +591,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       parent_folder: z.string().optional().describe("Parent folder name — optional for action='create'"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_folder", args.account);
+      if (denied) return denied;
       recordCall("manage_folder");
       if (!checkRateLimit("manage_folder", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("manage_folder");
@@ -620,6 +642,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       folder:      z.string().optional().describe("Folder to scan — optional for action='apply' (default: Inbox)"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_rule", args.account);
+      if (denied) return denied;
       recordCall("manage_rule");
       if (!checkRateLimit("manage_rule", apiKey, args.action === "apply" ? 20 : config.limits.readOpsPerMinute, args.action === "apply" ? 60 * 1000 : 60 * 1000)) {
         recordRateLimit("manage_rule");
@@ -659,6 +683,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       entry_id: z.string().optional().describe("Entry ID from account://config/{account} — required for action='remove'"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_sender_list", args.account);
+      if (denied) return denied;
       recordCall("manage_sender_list");
       if (!checkRateLimit("manage_sender_list", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("manage_sender_list");
@@ -704,6 +730,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       attendees:   z.array(z.string()).optional().describe("Attendee email addresses"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_event", args.account);
+      if (denied) return denied;
       recordCall("manage_event");
       if (!checkRateLimit("manage_event", apiKey, 60, 60 * 60 * 1000)) {
         recordRateLimit("manage_event");
@@ -746,6 +774,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       end:          z.string().describe("Event end in ISO 8601 from the original invite"),
     },
     async (args) => {
+      const denied = authorize(caller, "respond_to_invite", normalizeAccount(args.from_account, config.domain));
+      if (denied) return denied;
       recordCall("respond_to_invite");
       if (!checkRateLimit("respond_to_invite", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("respond_to_invite");
@@ -774,6 +804,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       value: z.string().optional().describe("New value — required for display_name, signature, vacation_reply, forwarding. Omit to clear a setting."),
     },
     async (args) => {
+      const denied = authorize(caller, "configure_account", args.account);
+      if (denied) return denied;
       recordCall("configure_account");
       if (!checkRateLimit("configure_account", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("configure_account");
@@ -804,6 +836,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       idempotency_key: z.string().optional().describe("Deduplication key for send/schedule actions"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_draft", args.account);
+      if (denied) return denied;
       recordCall("manage_draft");
       if (!checkRateLimit("manage_draft", apiKey, config.limits.sendEmailPerMinute, 60 * 1000)) {
         recordRateLimit("manage_draft");
@@ -836,6 +870,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       label:     z.string().optional().describe("Label name — required for action='add_label' or 'remove_label'"),
     },
     async (args) => {
+      const denied = authorize(caller, "update_thread", args.account);
+      if (denied) return denied;
       recordCall("update_thread");
       if (!checkRateLimit("update_thread", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("update_thread");
@@ -871,6 +907,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       metadata: z.record(z.string(), z.unknown()).optional().describe("Arbitrary key-value metadata"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_contact", args.account);
+      if (denied) return denied;
       recordCall("manage_contact");
       if (!checkRateLimit("manage_contact", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("manage_contact");
@@ -900,6 +938,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       variables:   z.array(z.string()).optional().describe("List of variable names used in subject/body (for documentation)"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_template", args.account);
+      if (denied) return denied;
       recordCall("manage_template");
       if (!checkRateLimit("manage_template", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("manage_template");
@@ -927,6 +967,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       idempotency_key: z.string().optional().describe("Deduplication key — results cached 24h"),
     },
     async (args) => {
+      const denied = authorize(caller, "send_batch", normalizeAccount(args.account, config.domain));
+      if (denied) return denied;
       recordCall("send_batch");
       if (args.idempotency_key) {
         const cached = idempotencyCheck(args.idempotency_key);
@@ -965,6 +1007,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       webhook_id: z.string().optional().describe("Webhook ID — required for action='unregister'"),
     },
     async (args) => {
+      const denied = authorize(caller, "manage_webhook", args.account);
+      if (denied) return denied;
       recordCall("manage_webhook");
       if (!checkRateLimit("manage_webhook", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("manage_webhook");
@@ -998,6 +1042,11 @@ function createMcpServer(caller: CallerIdentity): McpServer {
     new ResourceTemplate("email://inbox/{account}", { list: undefined }),
     { description: "Live view of the inbox for the given account. Returns up to 50 most recent email summaries." },
     async (uri, { account }) => {
+      const denied = authorize(caller, "resource:inbox", account as string);
+      if (denied) {
+        const msg = (denied.content[0] as { type: "text"; text: string }).text;
+        throw new Error(msg);
+      }
       const jmap = new JmapClient(account as string);
       try {
         const emails = await jmap.listEmails("Inbox", 50);
@@ -1028,6 +1077,11 @@ function createMcpServer(caller: CallerIdentity): McpServer {
     new ResourceTemplate("email://thread/{account}/{thread_id}", { list: undefined }),
     { description: "All emails in a conversation thread, ordered oldest-first." },
     async (uri, { account, thread_id }) => {
+      const denied = authorize(caller, "resource:thread", account as string);
+      if (denied) {
+        const msg = (denied.content[0] as { type: "text"; text: string }).text;
+        throw new Error(msg);
+      }
       const jmap = new JmapClient(account as string);
       try {
         const emails = await jmap.getThread(thread_id as string);
@@ -1062,6 +1116,11 @@ function createMcpServer(caller: CallerIdentity): McpServer {
         "Full configuration snapshot for an account: folders, mailbox rules, whitelist/blacklist, custom labels, and account settings (display name, signature, etc.). Read this to get entry IDs before calling manage_rule or manage_sender_list with action='delete'/'remove'.",
     },
     async (uri, { account }) => {
+      const denied = authorize(caller, "resource:account-config", account as string);
+      if (denied) {
+        const msg = (denied.content[0] as { type: "text"; text: string }).text;
+        throw new Error(msg);
+      }
       const acct = account as string;
       const [foldersResult, rulesResult, whitelistResult, blacklistResult, labelsResult, settings] =
         await Promise.allSettled([
