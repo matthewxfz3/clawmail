@@ -22,13 +22,30 @@ clawmail/
 │   └── src/
 │       ├── index.ts             ← HTTP server, auth middleware, rate limiter
 │       ├── config.ts            ← all env vars in one place
+│       ├── auth.ts              ← API key parsing, CallerIdentity, role-based authorization
+│       ├── metrics.ts           ← in-memory tool call metrics
+│       ├── dashboard.ts         ← web dashboard (overview, inboxes, metrics)
 │       ├── clients/
 │       │   ├── stalwart-mgmt.ts ← Stalwart Management REST API client
 │       │   └── jmap.ts          ← JMAP client (mailbox read/search/delete)
+│       ├── lib/
+│       │   ├── errors.ts        ← structured error envelope
+│       │   └── idempotency.ts   ← idempotency key cache
 │       └── tools/
 │           ├── accounts.ts      ← create_account, list_accounts, delete_account
-│           ├── mailbox.ts       ← list_emails, read_email, delete_email, search_emails
-│           └── send.ts          ← send_email (via SendGrid SMTP, not JMAP)
+│           ├── mailbox.ts       ← list_emails, read_email, search_emails
+│           ├── send.ts          ← send_email, reply, forward (via SendGrid SMTP)
+│           ├── calendar.ts      ← manage_event, send/cancel/respond_to_invite
+│           ├── configure.ts     ← configure_account settings
+│           ├── contacts.ts      ← manage_contact
+│           ├── drafts.ts        ← manage_draft
+│           ├── filters.ts       ← manage_filter
+│           ├── folders.ts       ← manage_folder
+│           ├── labels.ts        ← update_email labels
+│           ├── outreach.ts      ← manage_template, send_batch
+│           ├── rules.ts         ← manage_rule
+│           ├── spam.ts          ← classify_email, manage_sender_list
+│           └── webhooks.ts      ← manage_webhook
 ├── stalwart/
 │   ├── config.toml              ← Stalwart server config (env-var substitution)
 │   └── docker-compose.yml       ← local dev stack (Stalwart + PostgreSQL)
@@ -42,6 +59,8 @@ clawmail/
 │   ├── secrets.tf               ← Secret Manager secrets
 │   └── artifact_registry.tf     ← Docker image registry
 └── docs/
+    ├── deployment-gcp.md        ← GCP deployment and monitoring guide
+    ├── debugging-inbound-delivery.md ← inbound email debugging log
     └── planning/architecture.md ← original architecture plan (may be slightly stale)
 ```
 
@@ -94,7 +113,8 @@ httpServer.on("request", (req, res) => transport.handleRequest(req, res, body));
 
 // ✅ Correct — fresh server + transport per request
 httpServer.on("request", async (req, res) => {
-  const mcpServer = createMcpServer(apiKey);
+  const caller = authenticate(req, config);  // returns CallerIdentity
+  const mcpServer = createMcpServer(caller);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await mcpServer.connect(transport);
   await transport.handleRequest(req, res, body);
