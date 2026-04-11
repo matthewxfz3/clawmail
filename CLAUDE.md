@@ -120,6 +120,24 @@ quota: 1073741824  // 1 GiB
 
 Creating an `individual` principal for `agent@domain.com` fails with `{"error":"notFound","item":"domain.com"}` if the domain principal doesn't exist. Call `ensureDomainExists()` first — it's idempotent (handles `fieldAlreadyExists`).
 
+### 9. API key permission levels (admin vs user)
+
+Each API key maps to a role via the `MCP_API_KEY_MAP` env var (JSON array):
+
+```json
+[
+  { "key": "admin-key-abc", "role": "admin" },
+  { "key": "user-key-xyz", "role": "user", "account": "agent@fridaymailer.com" }
+]
+```
+
+- **admin**: full access to all tools and all accounts
+- **user**: full mailbox access but only for their own bound account; cannot call `create_account`, `delete_account`, or `list_accounts`
+
+Authorization is enforced by `authorize()` in `src/auth.ts`, called at the top of every tool and resource handler in `index.ts`.
+
+Backward compatible: if only `MCP_API_KEYS` is set (legacy comma-separated format), all keys are treated as admin. Dev mode (no keys set): open access as admin.
+
 ---
 
 ## Local development
@@ -178,7 +196,8 @@ The live endpoint is available via `gcloud run services describe clawmail-mcp --
 | `STALWART_ADMIN_PASSWORD` | Secret Manager `stalwart-admin-password` | Stalwart HTTP Basic Auth |
 | `SENDGRID_API_KEY` | Secret Manager `sendgrid-api-key` | SMTP password for `smtp.sendgrid.net` |
 | `SENDGRID_VERIFIED_SENDER` | Cloud Run (plain env) | Verified FROM address for outbound email |
-| `MCP_API_KEYS` | Secret Manager `mcp-api-key` | Comma-separated valid API keys |
+| `MCP_API_KEYS` | Secret Manager `mcp-api-key` | Comma-separated valid API keys (legacy — all treated as admin) |
+| `MCP_API_KEY_MAP` | Secret Manager `mcp-api-key-map` | JSON array mapping keys to roles and accounts (see §9 above) |
 
 ---
 
@@ -197,4 +216,4 @@ The live endpoint is available via `gcloud run services describe clawmail-mcp --
 - **Spam filter:** Inbound emails may land in Junk Mail. SendGrid domain auth (DKIM/DMARC alignment) is now configured — spam scoring should improve. See `docs/debugging-inbound-delivery.md` for history.
 - **Inbound SMTP testing:** Port 25 times out from residential IPs (ISP blocks) but works from external mail servers via the published MX record.
 - **User JMAP auth:** Direct HTTP Basic Auth for regular accounts returns 401. Workaround implemented: master-user impersonation (`user*admin:pass`) in `jmap.ts` gives a session scoped to the target user.
-- **No test suite yet:** The project has no unit or integration tests. The Stalwart management client and JMAP client would benefit from mocked tests.
+- **Test coverage:** Unit tests exist for auth, JMAP, Stalwart management, calendar, and rules modules. E2E tests cover all 25 tools, 3 resources, and authorization. Run with `cd mcp-server && npx vitest run`.
