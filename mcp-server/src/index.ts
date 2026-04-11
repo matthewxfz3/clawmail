@@ -151,6 +151,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
     "Create a new email account on the mail server",
     { local_part: z.string().describe("The local part (before @) of the new email address") },
     async (args) => {
+      const denied = authorize(caller, "create_account");
+      if (denied) return denied;
       recordCall("create_account");
       if (!checkRateLimit("create_account", apiKey, config.limits.createAccountPerHour, 60 * 60 * 1000)) {
         recordRateLimit("create_account");
@@ -175,6 +177,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
     "List all email accounts on the mail server",
     {},
     async () => {
+      const denied = authorize(caller, "list_accounts");
+      if (denied) return denied;
       recordCall("list_accounts");
       if (!checkRateLimit("list_accounts", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("list_accounts");
@@ -195,6 +199,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
     "Permanently delete an email account from the mail server",
     { local_part: z.string().describe("The local part (before @) of the account to delete") },
     async (args) => {
+      const denied = authorize(caller, "delete_account");
+      if (denied) return denied;
       recordCall("delete_account");
       if (!checkRateLimit("delete_account", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
         recordRateLimit("delete_account");
