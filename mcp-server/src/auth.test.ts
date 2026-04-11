@@ -89,7 +89,9 @@ describe("authorize", () => {
     const err = authorize(user, "create_account");
     expect(err).not.toBeNull();
     expect(err!.isError).toBe(true);
-    expect(err!.content[0].text).toMatch(/admin/i);
+    const msg = err!.content[0];
+    expect(msg.type).toBe("text");
+    expect((msg as { type: "text"; text: string }).text).toMatch(/admin/i);
   });
 
   it("user is denied for delete_account", () => {
@@ -112,7 +114,9 @@ describe("authorize", () => {
     const err = authorize(user, "list_emails", "alice@example.com");
     expect(err).not.toBeNull();
     expect(err!.isError).toBe(true);
-    expect(err!.content[0].text).toMatch(/permission denied/i);
+    const msg = err!.content[0];
+    expect(msg.type).toBe("text");
+    expect((msg as { type: "text"; text: string }).text).toMatch(/permission denied/i);
   });
 
   it("user with no target account on scoped tool is denied", () => {

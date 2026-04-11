@@ -1,3 +1,5 @@
+import { parseApiKeyMap, type CallerIdentity } from "./auth.js";
+
 export const config = {
   domain: process.env.DOMAIN ?? (() => { throw new Error("DOMAIN env var required") })(),
   stalwart: {
@@ -10,8 +12,23 @@ export const config = {
     verifiedSender: process.env.SENDGRID_VERIFIED_SENDER ?? (() => { throw new Error("SENDGRID_VERIFIED_SENDER env var required") })(),
   },
   auth: {
-    // Comma-separated list of valid API keys
+    // Legacy: comma-separated list of valid API keys (all treated as admin)
     apiKeys: new Set((process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean)),
+    // New: JSON array mapping each key to a role and optional bound account.
+    // If MCP_API_KEY_MAP is set, it takes precedence. Otherwise, MCP_API_KEYS
+    // keys are treated as admin for backward compatibility.
+    apiKeyMap: (() => {
+      const mapJson = process.env.MCP_API_KEY_MAP ?? "";
+      if (mapJson.trim()) {
+        return parseApiKeyMap(mapJson);
+      }
+      const legacyKeys = (process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean);
+      const map = new Map<string, CallerIdentity>();
+      for (const key of legacyKeys) {
+        map.set(key, { apiKey: key, role: "admin" });
+      }
+      return map;
+    })(),
   },
   daily: {
     // Optional — if set, send_event_invite auto-creates a Daily.co video room
