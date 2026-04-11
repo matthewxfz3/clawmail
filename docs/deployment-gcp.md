@@ -92,16 +92,76 @@ In the SendGrid dashboard: *Settings → Sender Authentication → Verify a Sing
 
 ---
 
+## Configuring API key permissions
+
+Clawmail supports two API key roles: **admin** (full access) and **user** (scoped to one account). Keys are configured via the `MCP_API_KEY_MAP` secret in Secret Manager.
+
+### Creating the key map
+
+Generate keys and build a JSON array:
+
+```bash
+ADMIN_KEY=$(openssl rand -hex 32)
+USER_KEY=$(openssl rand -hex 32)
+
+cat <<EOF
+[
+  { "key": "$ADMIN_KEY", "role": "admin" },
+  { "key": "$USER_KEY", "role": "user", "account": "agent@yourdomain.com" }
+]
+EOF
+```
+
+### Storing in Secret Manager
+
+```bash
+# Create the secret (first time)
+echo -n '<JSON_ARRAY>' | gcloud secrets create mcp-api-key-map \
+  --data-file=- --project=YOUR_PROJECT_ID
+
+# Update an existing secret
+echo -n '<JSON_ARRAY>' | gcloud secrets versions add mcp-api-key-map \
+  --data-file=- --project=YOUR_PROJECT_ID
+```
+
+Grant the Cloud Run service account access:
+
+```bash
+gcloud secrets add-iam-policy-binding mcp-api-key-map \
+  --project=YOUR_PROJECT_ID \
+  --member="serviceAccount:clawmail-mcp-run@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+### Wiring to Cloud Run
+
+```bash
+gcloud run services update clawmail-mcp \
+  --region=us-west1 \
+  --project=YOUR_PROJECT_ID \
+  --update-secrets=MCP_API_KEY_MAP=mcp-api-key-map:latest
+```
+
+If you're using Terraform, `infra/cloudrun.tf` and `infra/secrets.tf` already have `mcp-api-key-map` wired up — just set the `mcp_api_key_map` Terraform variable.
+
+> **Backward compatibility:** If only `MCP_API_KEYS` is set (comma-separated keys, no JSON), all keys are treated as admin. Dev mode (no keys set) allows open access.
+
+---
+
 ## Redeploying after code changes
 
 ```bash
 cd mcp-server
 npm run build
 
-# Build and push the updated image
+# Build and push the updated image (option A: local Docker)
 docker buildx build --platform linux/amd64 \
   -t us-west1-docker.pkg.dev/YOUR_PROJECT_ID/clawmail/mcp-server:latest \
   --push .
+
+# Build and push the updated image (option B: Cloud Build — no local Docker needed)
+gcloud builds submit --tag=us-west1-docker.pkg.dev/YOUR_PROJECT_ID/clawmail/mcp-server:latest \
+  --project=YOUR_PROJECT_ID --region=us-west1
 
 # Deploy
 gcloud run services update clawmail-mcp \
@@ -277,6 +337,16 @@ gcloud logging read \
 ```
 
 Common causes: missing env var, Stalwart unreachable, JMAP auth failure.
+
+### Permission denied errors
+
+If a tool call returns `Permission denied: "create_account" requires admin privileges`:
+- The API key is configured with `"role": "user"` — only admin keys can manage accounts
+- Check the `MCP_API_KEY_MAP` secret value to verify the key's role
+
+If a tool call returns `Permission denied: you can only access your own account`:
+- The API key is a user key trying to access a different account
+- Verify the `"account"` field in the key map matches the account being accessed
 
 ### Stalwart API returns 200 with error JSON
 

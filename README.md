@@ -75,7 +75,25 @@ Add to your `mcp.json` or Claude Desktop config:
 }
 ```
 
-The `X-API-Key` value must match one of the keys configured in `MCP_API_KEYS`.
+The `X-API-Key` value must match a key configured in `MCP_API_KEY_MAP` (or the legacy `MCP_API_KEYS`).
+
+### API key permissions
+
+Each API key has a role — **admin** or **user** — configured via the `MCP_API_KEY_MAP` environment variable (a JSON array):
+
+```json
+[
+  { "key": "admin-key-abc", "role": "admin" },
+  { "key": "user-key-xyz", "role": "user", "account": "agent@yourdomain.com" }
+]
+```
+
+| Role | Access |
+|------|--------|
+| **admin** | Full access to all tools and all accounts |
+| **user** | Full mailbox access for their own bound account only; cannot create, delete, or list accounts |
+
+For backward compatibility, the legacy `MCP_API_KEYS` format (comma-separated keys) still works — all keys are treated as admin.
 
 ---
 
@@ -136,15 +154,22 @@ bash scripts/install-hooks.sh
 ```
 clawmail/
 ├── scripts/
-│   ├── setup.sh             ← full GCP setup (interactive)
-│   ├── destroy.sh           ← full GCP teardown (double-confirmed)
-│   └── hooks/pre-commit     ← secret scanner hook
-├── infra/                   ← Terraform (GCP infrastructure)
-├── stalwart/                ← Stalwart config + local docker-compose
-├── mcp-server/              ← TypeScript MCP service (Cloud Run)
+│   ├── setup.sh              ← full GCP setup (interactive)
+│   ├── destroy.sh            ← full GCP teardown (double-confirmed)
+│   └── hooks/pre-commit      ← secret scanner hook
+├── infra/                    ← Terraform (GCP infrastructure)
+├── stalwart/                 ← Stalwart config + local docker-compose
+├── mcp-server/               ← TypeScript MCP service (Cloud Run)
+│   └── src/
+│       ├── index.ts          ← HTTP server, auth, rate limiter
+│       ├── auth.ts           ← API key parsing, role-based authorization
+│       ├── config.ts         ← environment variable config
+│       ├── dashboard.ts      ← web dashboard
+│       ├── clients/          ← Stalwart Management + JMAP clients
+│       └── tools/            ← tool implementations (25 tools)
 ├── docs/
-│   └── deployment-gcp.md   ← GCP deployment and monitoring guide
-└── CLAUDE.md                ← guide for AI agents contributing to this repo
+│   └── deployment-gcp.md    ← GCP deployment and monitoring guide
+└── CLAUDE.md                 ← guide for AI agents contributing to this repo
 ```
 
 ---
