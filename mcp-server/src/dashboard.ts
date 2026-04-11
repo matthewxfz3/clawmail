@@ -765,6 +765,8 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
                 ? '<span class="pill green">ok</span>'
                 : e.status === 'ratelimit'
                 ? '<span class="pill" style="background:#fef3c7;color:#92400e">rate limit</span>'
+                : e.status === 'denied'
+                ? '<span class="pill" style="background:#ffedd5;color:#9a3412">denied</span>'
                 : '<span class="pill red">error</span>';
               var errDetail = e.errorMsg ? '<div style="font-size:.75rem;color:#dc2626;margin-top:1px">' + e.errorMsg.slice(0, 120) + '</div>' : '';
               return '<tr><td style="white-space:nowrap;font-size:.78rem;color:#888">' + new Date(e.ts).toLocaleTimeString() + '</td>' +

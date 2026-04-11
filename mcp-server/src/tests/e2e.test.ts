@@ -1490,5 +1490,31 @@ describe("Authorization", () => {
       const result = await callTool("list_emails", { account: "anyone@test.example.com" }, TEST_KEY);
       expect(result.ok).toBe(true);
     });
+
+    it("user key can configure_account with local-part form", async () => {
+      mockStalwart.accountExists.mockResolvedValue(true);
+      mockStalwart.patchAccount.mockResolvedValue(undefined);
+
+      const result = await callTool("configure_account", {
+        account: "alice",
+        setting: "display_name",
+        value: "Alice",
+      }, USER_KEY);
+      expect(result.ok).toBe(true);
+    });
+
+    it("user key is denied configure_account for other account (local-part)", async () => {
+      const { rpc } = await mcpPost(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "configure_account", arguments: {
+          account: "bob",
+          setting: "display_name",
+          value: "Bob",
+        } } },
+        USER_KEY,
+      );
+      const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
+      expect(content?.isError).toBe(true);
+      expect(content?.content?.[0]?.text).toMatch(/permission denied/i);
+    });
   });
 });

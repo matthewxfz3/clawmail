@@ -96,9 +96,16 @@ export function authorize(
     };
   }
 
-  if (targetAccount.toLowerCase() !== caller.account!.toLowerCase()) {
+  if (!caller.account) {
     return {
-      content: [{ type: "text", text: `Permission denied: you can only access your own account (${caller.account}).` }],
+      content: [{ type: "text", text: "Permission denied: user key has no bound account." }],
+      isError: true,
+    };
+  }
+
+  if (targetAccount.toLowerCase() !== caller.account.toLowerCase()) {
+    return {
+      content: [{ type: "text", text: "Permission denied: you can only access your own account." }],
       isError: true,
     };
   }

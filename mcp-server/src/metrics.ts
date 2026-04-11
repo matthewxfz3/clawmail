@@ -139,7 +139,7 @@ export interface ToolCallEntry {
   tool: string;
   account: string;
   durationMs: number;
-  status: "ok" | "error" | "ratelimit";
+  status: "ok" | "error" | "ratelimit" | "denied";
   errorMsg?: string;
 }
 
