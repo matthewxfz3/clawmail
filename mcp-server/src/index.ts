@@ -6,6 +6,7 @@ import { mcpOk, mcpError, mcpCaughtError } from "./lib/errors.js";
 import { idempotencyCheck, idempotencySet } from "./lib/idempotency.js";
 import { JmapClient } from "./clients/jmap.js";
 import { config } from "./config.js";
+import { type CallerIdentity, authorize, normalizeAccount } from "./auth.js";
 import {
   toolCreateAccount,
   toolDeleteAccount,
@@ -137,7 +138,8 @@ async function runTool<T>(toolName: string, account: string, fn: () => Promise<T
 // MCP server factory — creates a fresh McpServer per request (stateless mode)
 // ---------------------------------------------------------------------------
 
-function createMcpServer(apiKey: string): McpServer {
+function createMcpServer(caller: CallerIdentity): McpServer {
+  const apiKey = caller.apiKey;
   const server = new McpServer(
     { name: "clawmail", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
@@ -1094,23 +1096,32 @@ function createMcpServer(apiKey: string): McpServer {
 
 /**
  * Authenticate the request using X-API-Key header.
- * Returns the api key string on success, or sends a 401 and returns null.
+ * Returns a CallerIdentity on success, or sends a 401 and returns null.
  */
-function authenticate(req: IncomingMessage, res: ServerResponse): string | null {
-  // config.auth.apiKeys is a Set<string>; if it's empty no key is configured
-  // and we treat the server as unauthenticated (useful for dev).
-  if (config.auth.apiKeys.size === 0) {
-    return ""; // open — no keys configured
+function authenticate(req: IncomingMessage, res: ServerResponse): CallerIdentity | null {
+  // Dev mode: no keys configured -- open access as admin
+  if (config.auth.apiKeyMap.size === 0 && config.auth.apiKeys.size === 0) {
+    return { apiKey: "", role: "admin" };
   }
 
   const apiKey = req.headers["x-api-key"];
-  if (typeof apiKey !== "string" || !config.auth.apiKeys.has(apiKey)) {
+  if (typeof apiKey !== "string") {
     res.writeHead(401, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Unauthorized: missing or invalid X-API-Key header" }));
+    res.end(JSON.stringify({ error: "Unauthorized: missing X-API-Key header" }));
     return null;
   }
 
-  return apiKey;
+  const identity = config.auth.apiKeyMap.get(apiKey);
+  if (identity) return identity;
+
+  // Legacy fallback: check plain apiKeys set (treated as admin)
+  if (config.auth.apiKeys.has(apiKey)) {
+    return { apiKey, role: "admin" };
+  }
+
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized: invalid API key" }));
+  return null;
 }
 
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -1134,8 +1145,8 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     return;
   }
 
-  const apiKey = authenticate(req, res);
-  if (apiKey === null) return; // 401 already sent
+  const caller = authenticate(req, res);
+  if (caller === null) return; // 401 already sent
 
   // Parse body for POST requests (raw Node.js HTTP doesn't pre-parse the body)
   let parsedBody: unknown;
@@ -1151,7 +1162,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   // Create a fresh server + transport per request (required for stateless mode).
-  const mcpServer = createMcpServer(apiKey);
+  const mcpServer = createMcpServer(caller);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined, // stateless mode
   });
@@ -1177,5 +1188,6 @@ export { httpServer };
 httpServer.listen(config.port, () => {
   console.log(`[clawmail-mcp] Listening on port ${config.port}`);
   console.log(`[clawmail-mcp] MCP endpoint: POST/GET http://0.0.0.0:${config.port}/mcp`);
-  console.log(`[clawmail-mcp] Auth: ${config.auth.apiKeys.size > 0 ? `${config.auth.apiKeys.size} API key(s) configured` : "OPEN (no API keys set)"}`);
+  const totalKeys = config.auth.apiKeyMap.size || config.auth.apiKeys.size;
+  console.log(`[clawmail-mcp] Auth: ${totalKeys > 0 ? `${totalKeys} API key(s) configured` : "OPEN (no API keys set)"}`);
 });
