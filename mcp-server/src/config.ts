@@ -20,7 +20,14 @@ export const config = {
     apiKeyMap: (() => {
       const mapJson = process.env.MCP_API_KEY_MAP ?? "";
       if (mapJson.trim()) {
-        return parseApiKeyMap(mapJson);
+        try {
+          return parseApiKeyMap(mapJson);
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `Failed to parse MCP_API_KEY_MAP — fix the JSON or unset the variable. Detail: ${detail}`,
+          );
+        }
       }
       const legacyKeys = (process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean);
       const map = new Map<string, CallerIdentity>();

@@ -119,9 +119,25 @@ describe("authorize", () => {
     expect((msg as { type: "text"; text: string }).text).toMatch(/permission denied/i);
   });
 
+  it("denial message does not leak the caller's email address", () => {
+    const err = authorize(user, "list_emails", "alice@example.com");
+    expect(err).not.toBeNull();
+    const msg = (err!.content[0] as { type: "text"; text: string }).text;
+    expect(msg).not.toContain("bob@example.com");
+  });
+
   it("user with no target account on scoped tool is denied", () => {
     const err = authorize(user, "list_emails");
     expect(err).not.toBeNull();
     expect(err!.isError).toBe(true);
+  });
+
+  it("user key with missing account field is denied gracefully", () => {
+    const badUser: CallerIdentity = { apiKey: "bk", role: "user" };
+    const err = authorize(badUser, "list_emails", "anyone@example.com");
+    expect(err).not.toBeNull();
+    expect(err!.isError).toBe(true);
+    const msg = (err!.content[0] as { type: "text"; text: string }).text;
+    expect(msg).toMatch(/no bound account/i);
   });
 });
