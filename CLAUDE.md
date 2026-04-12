@@ -33,6 +33,7 @@ clawmail/
 │       │   └── idempotency.ts   ← idempotency key cache
 │       └── tools/
 │           ├── accounts.ts      ← create_account, list_accounts, delete_account
+│           ├── tokens.ts        ← token CRUD (createToken, resolveToken, revokeToken)
 │           ├── mailbox.ts       ← list_emails, read_email, search_emails
 │           ├── send.ts          ← send_email, reply, forward (via SendGrid SMTP)
 │           ├── calendar.ts      ← manage_event, send/cancel/respond_to_invite
@@ -63,6 +64,33 @@ clawmail/
     ├── debugging-inbound-delivery.md ← inbound email debugging log
     └── planning/architecture.md ← original architecture plan (may be slightly stale)
 ```
+
+---
+
+## Two-layer authentication model
+
+Clawmail uses **two independent auth layers**:
+
+| Layer | Header / Param | Purpose |
+|-------|---------------|---------|
+| **Service auth** | `X-API-Key` header | Proves you are allowed to connect to this MCP endpoint. Shared across agents. |
+| **Account auth** | `token` tool parameter | Per-account credential returned by `create_account`. Proves "I own this account." |
+
+**Agent flow:**
+
+```
+1. Agent connects with X-API-Key in headers          (service auth)
+2. Agent calls create_account({ local_part: "bot" })  (open to all authenticated callers)
+3. Server returns { email: "bot@domain.com", token: "tok_abc..." }
+4. Agent calls list_emails({ token: "tok_abc..." })    (no X-API-Key needed per tool)
+5. Agent calls send_email({ token: "tok_abc...", to: "user@gmail.com", ... })
+```
+
+**Admin tokens** (`MCP_ADMIN_TOKENS` env var): comma-separated static tokens that work for any account and bypass all scoping. Treat like root credentials.
+
+**Token storage**: persisted as JMAP emails in the `_tokens` system mailbox of the `clawmail-system@{domain}` service account. SHA-256 hashed — plaintext never stored. In-memory cache with 60-second TTL.
+
+**`clawmail-system` account**: reserved system account used to store tokens. Do NOT delete it via `delete_account`.
 
 ---
 
@@ -152,7 +180,7 @@ Each API key maps to a role via the `MCP_API_KEY_MAP` env var (JSON array):
 ```
 
 - **admin**: full access to all tools and all accounts
-- **user**: full mailbox access but only for their own bound account; cannot call `create_account`, `delete_account`, or `list_accounts`
+- **user**: full mailbox access but only for their own bound account; cannot call `delete_account` or `list_accounts`; _can_ call `create_account` (open to all authenticated callers)
 
 Authorization is enforced by `authorize()` in `src/auth.ts`, called at the top of every tool and resource handler in `index.ts`.
 
@@ -217,7 +245,8 @@ The live endpoint is available via `gcloud run services describe clawmail-mcp --
 | `SENDGRID_API_KEY` | Secret Manager `sendgrid-api-key` | SMTP password for `smtp.sendgrid.net` |
 | `SENDGRID_VERIFIED_SENDER` | Cloud Run (plain env) | Verified FROM address for outbound email |
 | `MCP_API_KEYS` | Secret Manager `mcp-api-key` | Comma-separated valid API keys (legacy — all treated as admin) |
-| `MCP_API_KEY_MAP` | Secret Manager `mcp-api-key-map` | JSON array mapping keys to roles and accounts (see §9 above) |
+| `MCP_API_KEY_MAP` | Secret Manager `mcp-api-key-map` | JSON array mapping keys to roles and accounts |
+| `MCP_ADMIN_TOKENS` | Secret Manager (optional) | Comma-separated static admin tokens (bypass all account scoping; treat as root credentials) |
 
 ---
 
@@ -236,4 +265,4 @@ The live endpoint is available via `gcloud run services describe clawmail-mcp --
 - **Spam filter:** Inbound emails may land in Junk Mail. SendGrid domain auth (DKIM/DMARC alignment) is now configured — spam scoring should improve. See `docs/debugging-inbound-delivery.md` for history.
 - **Inbound SMTP testing:** Port 25 times out from residential IPs (ISP blocks) but works from external mail servers via the published MX record.
 - **User JMAP auth:** Direct HTTP Basic Auth for regular accounts returns 401. Workaround implemented: master-user impersonation (`user*admin:pass`) in `jmap.ts` gives a session scoped to the target user.
-- **Test coverage:** Unit tests exist for auth, JMAP, Stalwart management, calendar, and rules modules. E2E tests cover all 25 tools, 3 resources, and authorization. Run with `cd mcp-server && npx vitest run`.
+- **Test coverage:** 220 unit and integration tests. Key test files: `auth.test.ts` (role-based authorization), `tokens.test.ts` (token CRUD), `accounts.test.ts` (account lifecycle and token cleanup), `stalwart-mgmt.test.ts`, `jmap.test.ts`, and `tests/e2e.test.ts` (all 26 tools, 3 resources, and authorization). Run with `cd mcp-server && npx vitest run`.

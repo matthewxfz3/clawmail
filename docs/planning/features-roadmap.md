@@ -20,7 +20,7 @@ Prompts   → workflows (parameterized multi-step patterns)
 | Rule | Rationale |
 |---|---|
 | **Tools = verbs with side effects only** | If the operation is "give me data," it's a Resource |
-| **≤ 25 tools total** | Each tool costs ~75 tokens of context overhead on every request; 100 tools = 7,500 wasted tokens |
+| **≤ 30 tools total** | Each tool costs ~75 tokens of context overhead on every request; 100 tools = 7,500 wasted tokens |
 | **Consolidate CRUD with `action` params** | 5 tools for one entity → 1 tool with `action: "create"\|"update"\|"delete"\|"list"` |
 | **Rich params over proliferating tools** | `search_emails(query, mode, fields, after, before)` > separate tools per filter type |
 | **Prompts for multi-step workflows** | `triage_inbox` should be a Prompt, not a compound tool |
@@ -33,7 +33,7 @@ Prompts   → workflows (parameterized multi-step patterns)
 
 | Primitive | Count | Purpose |
 |---|---|---|
-| Tools | ~25 | Actions: send, delete, create, update |
+| Tools | ~26 | Actions: send, delete, create, update |
 | Resources | ~9 | Data: inbox, threads, contacts, calendar |
 | Prompts | ~7 | Workflows: triage, draft reply, schedule meeting |
 | **Total** | **~41** | vs. 100+ tools-only approach |
@@ -117,8 +117,9 @@ Organized by domain. Each tool is a **state-changing action** — no pure reads.
 
 | Tool | Params | Replaces | Status |
 |---|---|---|---|
-| `create_account` ✓ | `local_part`, `template?` | — | done |
-| `delete_account` ✓ | `local_part` | — | done |
+| `create_account` ✓ | `local_part`, `template?` | — | done (now returns scoped `token`) |
+| `delete_account` ✓ | `local_part` | — | done (now revokes all tokens on deletion) |
+| `manage_token` ✓ | `action: "create"\|"list"\|"revoke"`, `account?`, `token_id?`, `label?` | `list_api_keys`, `revoke_api_key` from Infrastructure section | done |
 | `configure_account` | `account`, `setting: "display_name"\|"signature"\|"availability_window"\|"vacation_reply"\|"forwarding"`, `value` | set_display_name, create_signature, set_availability_window, set_vacation_reply, set_forwarding_rule — 5 tools → 1 | [ ] |
 | `suspend_account` | `account`, `action: "suspend"\|"reactivate"` | suspend_account, reactivate_account — 2 → 1 | [ ] |
 | `manage_account_template` | `action: "create"\|"delete"\|"list"\|"apply"`, `name?`, `config?`, `account?` | create_account_template, provision_from_template — 2 → 1 | [ ] |
@@ -202,7 +203,7 @@ Organized by domain. Each tool is a **state-changing action** — no pure reads.
 
 | Domain | Tools |
 |---|---|
-| Account | 5 |
+| Account | 6 |
 | Email write | 3 |
 | Email state | 5 |
 | Search & drafts | 2 |
@@ -210,9 +211,9 @@ Organized by domain. Each tool is a **state-changing action** — no pure reads.
 | Calendar | 6 |
 | Contacts | 1 |
 | Outreach & webhooks | 4 |
-| **Total** | **29** |
+| **Total** | **30** |
 
-*A few tools are slightly over the 25 target due to calendar needing individual CRUD. Acceptable — calendar ops have distinct param shapes that would make one mega-tool harder to use.*
+*Current live tool count is 26 (including `manage_token`). The table above reflects planned consolidations not yet implemented.*
 
 ---
 
@@ -371,7 +372,7 @@ Existing tool names remain working during migration (deprecate, don't break).
 
 | Tools | File | Migration target |
 |---|---|---|
-| `create_account`, `list_accounts`, `delete_account` | `accounts.ts` | keep, add `configure_account` |
+| `create_account`, `list_accounts`, `delete_account`, `manage_token` | `accounts.ts`, `tokens.ts` | keep, add `configure_account` |
 | `list_emails`, `read_email`, `delete_email`, `search_emails` | `mailbox.ts` | `email://inbox` Resource + `update_email` + extend `search_emails` |
 | `mark_as_read`, `mark_as_unread`, `flag_email` | `mailbox.ts` | → `update_email(action: ...)` |
 | `bulk_move_emails`, `bulk_delete_emails`, `bulk_add_label` | `mailbox.ts` | → extend `bulk_update_emails` |
@@ -389,4 +390,4 @@ Existing tool names remain working during migration (deprecate, don't break).
 
 ---
 
-*Last updated: 2026-04-04*
+*Last updated: 2026-04-12*

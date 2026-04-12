@@ -32,3 +32,15 @@ _All items completed._
 - [x] Dashboard: metrics tab with time-series charts
 - [x] Dashboard: test email send form
 - [x] In-memory metrics tracking (`metrics.ts`) with per-tool call/error/rate-limit counters
+- [x] Two-layer authentication model — `X-API-Key` for service auth + per-account `token` for account auth
+- [x] `tokens.ts` — token CRUD: `createToken`, `resolveToken`, `listTokens`, `revokeToken`; SHA-256 hash storage in `_tokens` JMAP mailbox of `clawmail-system` account; 60-second in-memory cache
+- [x] `create_account` now returns a scoped `token` automatically (open to any authenticated caller)
+- [x] `manage_token` MCP tool — create/list/revoke per-account tokens with inline self-service authorization
+- [x] Dashboard Tokens tab — generate and revoke tokens with server-side flash store (plaintext token never in URL/logs)
+- [x] Per-account rate limiting for all account-scoped tools (prevents one agent exhausting the shared API key quota)
+- [x] Static admin tokens via `MCP_ADMIN_TOKENS` env var — bypass all account scoping; pre-computed SHA-256 hashes for performance
+- [x] `clawmail-system` account guard — `delete_account` rejects deletion of reserved system account
+- [x] Token revocation on `delete_account` — revokes all account tokens before deleting the mailbox; surfaces JMAP outage as a warning rather than silent failure
+- [x] Case-insensitive account comparison in `manage_token` (email addresses are case-insensitive)
+- [x] `accounts.test.ts` (12 tests) — account lifecycle, deletion guard, token cleanup, JMAP failure paths
+- [x] `tokens.test.ts` — token CRUD unit tests with mocked JMAP/Stalwart backends
