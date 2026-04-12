@@ -65,8 +65,13 @@ export function normalizeAccount(accountOrLocal: string, domain: string): string
 // Authorization
 // ---------------------------------------------------------------------------
 
+// create_account is intentionally absent — any authenticated caller may create
+// an account (and receives a scoped token in the response).
+//
+// manage_token is intentionally absent — its handler implements its own inline
+// authorization that allows users to manage their own tokens. Putting it here
+// would block user-role callers from self-service token operations.
 const ADMIN_ONLY_TOOLS = new Set([
-  "create_account",
   "delete_account",
   "list_accounts",
 ]);

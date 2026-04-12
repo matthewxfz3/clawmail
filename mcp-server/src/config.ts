@@ -14,6 +14,9 @@ export const config = {
   auth: {
     // Legacy: comma-separated list of valid API keys (all treated as admin)
     apiKeys: new Set((process.env.MCP_API_KEYS ?? "").split(",").map(k => k.trim()).filter(Boolean)),
+    // Static admin tokens (comma-separated). These are never stored in JMAP;
+    // they bypass all account scoping. Keep them secret — treat like root credentials.
+    adminTokens: new Set((process.env.MCP_ADMIN_TOKENS ?? "").split(",").map(t => t.trim()).filter(Boolean)),
     // New: JSON array mapping each key to a role and optional bound account.
     // If MCP_API_KEY_MAP is set, it takes precedence. Otherwise, MCP_API_KEYS
     // keys are treated as admin for backward compatibility.
