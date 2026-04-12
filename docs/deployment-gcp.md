@@ -92,25 +92,37 @@ In the SendGrid dashboard: *Settings → Sender Authentication → Verify a Sing
 
 ---
 
-## Configuring API key permissions
+## Authentication
 
-Clawmail supports two API key roles: **admin** (full access) and **user** (scoped to one account). Keys are configured via the `MCP_API_KEY_MAP` secret in Secret Manager.
+Clawmail uses a **two-layer auth model**:
 
-### Creating the key map
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| **Service auth** | `X-API-Key` request header | Proves you can reach the MCP endpoint. Configured once in the agent's `mcp.json`. |
+| **Account auth** | `token` tool parameter | Per-account credential returned by `create_account`. Scopes operations to a single mailbox. |
 
-Generate keys and build a JSON array:
+Typical agent flow:
+```
+1. Connect to MCP with X-API-Key header
+2. Call create_account → receives { email, token }
+3. Use token for all mailbox operations (list_emails, send_email, etc.)
+```
+
+### Configuring API keys for service auth
+
+Keys are stored in the `MCP_API_KEY_MAP` Secret Manager secret as a JSON array:
 
 ```bash
 ADMIN_KEY=$(openssl rand -hex 32)
-USER_KEY=$(openssl rand -hex 32)
 
 cat <<EOF
 [
-  { "key": "$ADMIN_KEY", "role": "admin" },
-  { "key": "$USER_KEY", "role": "user", "account": "agent@yourdomain.com" }
+  { "key": "$ADMIN_KEY", "role": "admin" }
 ]
 EOF
 ```
+
+Roles: **admin** (full access including `delete_account`, `list_accounts`, `manage_token`) vs **user** (mailbox access for their bound account only).
 
 ### Storing in Secret Manager
 
@@ -143,6 +155,21 @@ gcloud run services update clawmail-mcp \
 ```
 
 If you're using Terraform, `infra/cloudrun.tf` and `infra/secrets.tf` already have `mcp-api-key-map` wired up — just set the `mcp_api_key_map` Terraform variable.
+
+### Static admin tokens (optional)
+
+For operators who want a permanent admin credential to pass as the `token` parameter (bypassing account scoping), set `MCP_ADMIN_TOKENS`:
+
+```bash
+ADMIN_TOKEN=$(openssl rand -hex 32)
+echo -n "$ADMIN_TOKEN" | gcloud secrets create mcp-admin-tokens \
+  --data-file=- --project=YOUR_PROJECT_ID
+
+gcloud run services update clawmail-mcp \
+  --region=us-west1 \
+  --project=YOUR_PROJECT_ID \
+  --update-secrets=MCP_ADMIN_TOKENS=mcp-admin-tokens:latest
+```
 
 > **Backward compatibility:** If only `MCP_API_KEYS` is set (comma-separated keys, no JSON), all keys are treated as admin. Dev mode (no keys set) allows open access.
 
@@ -189,6 +216,15 @@ It requires the dashboard password set during setup (`DASHBOARD_PASSWORD`). The 
 | **Overview** | MCP connect snippet, system status (Stalwart, DNS, SendGrid), active account count |
 | **Inboxes** | All agent accounts with inbox/sent counts; click any account to browse emails |
 | **Metrics** | Tool call counts, error rates, process uptime, memory usage |
+| **Tokens** | Generate and revoke per-account tokens |
+
+> **Note — flash messages and multi-instance scaling:** The dashboard's "Tokens" tab displays generated token plaintexts via a server-side flash store (in-process memory). If Cloud Run scales to more than one instance, the POST that creates the flash and the GET that reads it may land on different instances, making the banner disappear. To avoid this, set `--min-instances=1` on the Cloud Run service:
+> ```bash
+> gcloud run services update clawmail-mcp \
+>   --region=us-west1 \
+>   --project=YOUR_PROJECT_ID \
+>   --min-instances=1
+> ```
 
 ### Cloud Run logs (MCP server)
 
@@ -340,13 +376,18 @@ Common causes: missing env var, Stalwart unreachable, JMAP auth failure.
 
 ### Permission denied errors
 
-If a tool call returns `Permission denied: "create_account" requires admin privileges`:
-- The API key is configured with `"role": "user"` — only admin keys can manage accounts
-- Check the `MCP_API_KEY_MAP` secret value to verify the key's role
+If a tool call returns `AUTH_ERROR: Invalid or expired token`:
+- The `token` parameter value is wrong or the token has been revoked
+- Call `create_account` again to generate a fresh token, or use the dashboard Tokens tab to generate one
+- If using `MCP_ADMIN_TOKENS`, verify the secret value matches what you're passing
+
+If a tool call returns `Permission denied: requires admin privileges`:
+- The operation (`delete_account`, `list_accounts`, `manage_token`) is admin-only
+- Use an admin X-API-Key or an admin-scoped token from `MCP_ADMIN_TOKENS`
 
 If a tool call returns `Permission denied: you can only access your own account`:
-- The API key is a user key trying to access a different account
-- Verify the `"account"` field in the key map matches the account being accessed
+- A user-role API key is trying to access a different account
+- Verify the `"account"` field in `MCP_API_KEY_MAP` matches the account being accessed, or switch to token-based auth (`create_account` → use returned token)
 
 ### Stalwart API returns 200 with error JSON
 

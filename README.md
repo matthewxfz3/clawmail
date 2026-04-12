@@ -18,9 +18,10 @@ Built on [Stalwart Mail Server](https://stalw.art) (SMTP + IMAP + JMAP), deploye
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `create_account` | `local_part` | Creates `{local_part}@{DOMAIN}`, returns the full address |
-| `list_accounts` | — | Lists all accounts on the server |
-| `delete_account` | `local_part` | Permanently removes an account and all its mail |
+| `create_account` | `local_part` | Creates `{local_part}@{DOMAIN}`; returns the email address and a scoped `token` for all subsequent operations |
+| `list_accounts` | — | Lists all accounts on the server (admin only) |
+| `delete_account` | `local_part` | Permanently removes an account, revokes its tokens, and deletes all its mail (admin only) |
+| `manage_token` | `action`, `account?`, `token_id?`, `label?` | Create, list, or revoke per-account tokens. Users can self-service their own tokens; admin can manage any account's tokens |
 
 ### Email
 
@@ -77,9 +78,28 @@ Add to your `mcp.json` or Claude Desktop config:
 
 The `X-API-Key` value must match a key configured in `MCP_API_KEY_MAP` (or the legacy `MCP_API_KEYS`).
 
-### API key permissions
+### Two-layer authentication
 
-Each API key has a role — **admin** or **user** — configured via the `MCP_API_KEY_MAP` environment variable (a JSON array):
+Clawmail uses two independent auth layers:
+
+1. **Service auth** (`X-API-Key` header) — proves you are allowed to connect to this MCP endpoint. Set once in `mcp.json`.
+2. **Account auth** (`token` tool parameter) — per-account credential returned by `create_account`. Proves "I own this account."
+
+**Typical agent flow:**
+```
+1. Connect with X-API-Key in headers
+2. Call create_account({ local_part: "my-agent" })
+   → returns { email: "my-agent@domain.com", token: "tok_abc123..." }
+3. Use the token for all subsequent operations:
+   list_emails({ token: "tok_abc123..." })
+   send_email({ token: "tok_abc123...", to: "...", ... })
+```
+
+The `token` parameter is accepted by every account-scoped tool (`list_emails`, `send_email`, `manage_contact`, etc.). The token encodes the bound account — no need to pass `account` separately.
+
+### API key roles (legacy / admin path)
+
+For operators who prefer static keys, configure `MCP_API_KEY_MAP`:
 
 ```json
 [
@@ -91,9 +111,11 @@ Each API key has a role — **admin** or **user** — configured via the `MCP_AP
 | Role | Access |
 |------|--------|
 | **admin** | Full access to all tools and all accounts |
-| **user** | Full mailbox access for their own bound account only; cannot create, delete, or list accounts |
+| **user** | Full mailbox access for their own bound account only; cannot delete or list accounts |
 
-For backward compatibility, the legacy `MCP_API_KEYS` format (comma-separated keys) still works — all keys are treated as admin.
+For backward compatibility, `MCP_API_KEYS` (comma-separated) still works — all keys are treated as admin.
+
+**Admin tokens** (`MCP_ADMIN_TOKENS` env var): comma-separated static tokens that bypass all account scoping. Equivalent to an admin key but passed as a `token` parameter.
 
 ---
 
