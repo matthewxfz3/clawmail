@@ -127,162 +127,218 @@ export function escHtml(s: string): string {
 }
 
 const CSS = `
+  :root{
+    --bg:#f1f5f9;
+    --surface:#ffffff;
+    --surface2:#f8fafc;
+    --border:#e2e8f0;
+    --border-strong:#cbd5e1;
+    --text:#0f172a;
+    --text2:#475569;
+    --text3:#94a3b8;
+    --accent:#2563eb;
+    --accent-light:#eff6ff;
+    --accent-hover:#1d4ed8;
+    --green:#059669;
+    --green-light:#ecfdf5;
+    --amber:#d97706;
+    --amber-light:#fffbeb;
+    --red:#dc2626;
+    --red-light:#fef2f2;
+    --purple:#7c3aed;
+    --purple-light:#f5f3ff;
+    --radius:10px;
+    --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+    --shadow-md:0 4px 12px rgba(0,0,0,.08),0 1px 4px rgba(0,0,0,.04);
+  }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6f9;color:#1a1a2e;min-height:100vh}
-  .topbar{background:#1a1a2e;color:#fff;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
-  .topbar h1{font-size:1.1rem;font-weight:600;letter-spacing:.3px}
-  .topbar span{font-size:.8rem;opacity:.6}
-  .topbar a{color:#a0c4ff;font-size:.85rem;text-decoration:none}
-  .topbar a:hover{text-decoration:underline}
-  /* tabs */
-  .tab-bar{background:#fff;border-bottom:1px solid #e5e7eb;padding:0 24px;display:flex;gap:0}
-  .tab-bar a{display:inline-block;padding:12px 20px;font-size:.88rem;font-weight:500;color:#666;text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
-  .tab-bar a:hover{color:#1a1a2e}
-  .tab-bar a.active{color:#4f46e5;border-bottom-color:#4f46e5;font-weight:600}
-  /* layout */
-  .container{max-width:960px;margin:28px auto;padding:0 16px;display:grid;gap:20px}
-  .card{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:24px}
-  .card h2{font-size:.9rem;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:#666;margin-bottom:16px}
-  /* status */
-  .status-row{display:flex;align-items:flex-start;gap:10px;padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:.9rem}
+  body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+  /* ── topbar ── */
+  .topbar{background:var(--text);color:#fff;padding:0 24px;display:flex;align-items:stretch;justify-content:space-between;height:52px}
+  .topbar-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff}
+  .topbar-logo{width:28px;height:28px;background:var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:800;letter-spacing:-.5px;flex-shrink:0}
+  .topbar h1{font-size:1rem;font-weight:700;letter-spacing:-.2px}
+  .topbar-right{display:flex;align-items:center;gap:6px}
+  .topbar-domain{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.75);border-radius:6px;padding:3px 10px;font-size:.75rem;font-family:'JetBrains Mono',monospace;letter-spacing:.3px}
+  .topbar-signout{color:rgba(255,255,255,.55);font-size:.82rem;text-decoration:none;padding:6px 10px;border-radius:6px;transition:background .15s}
+  .topbar-signout:hover{background:rgba(255,255,255,.1);color:#fff}
+  /* ── tab bar ── */
+  .tab-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;display:flex;gap:2px;align-items:flex-end}
+  .tab-bar a{display:inline-flex;align-items:center;gap:5px;padding:11px 14px;font-size:.82rem;font-weight:500;color:var(--text3);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s;white-space:nowrap}
+  .tab-bar a:hover{color:var(--text2)}
+  .tab-bar a.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  .tab-icon{font-size:.85rem;opacity:.8}
+  /* ── layout ── */
+  .container{max-width:980px;margin:24px auto;padding:0 20px;display:grid;gap:16px}
+  .card{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow);padding:22px 24px}
+  .card-title,.card h2{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text3);margin-bottom:14px}
+  /* ── status ── */
+  .status-row{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px solid var(--bg);font-size:.875rem}
   .status-row:last-child{border-bottom:none}
-  .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
-  .dot.ok{background:#22c55e}.dot.warn{background:#f59e0b}.dot.fail{background:#ef4444}.dot.info{background:#94a3b8}
-  .label{flex:1;color:#444}
-  .badge{font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:12px;color:#fff;white-space:nowrap}
-  .badge.ok{background:#22c55e}.badge.warn{background:#f59e0b}.badge.fail{background:#ef4444}
-  .row-detail{display:block;font-size:.75rem;color:#999;margin-top:1px;font-weight:400}
-  .status-group{margin-bottom:8px}
+  .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:5px}
+  .dot.ok{background:var(--green)}.dot.warn{background:var(--amber)}.dot.fail{background:var(--red)}.dot.info{background:var(--text3)}
+  .label{flex:1;color:var(--text2)}
+  .badge{font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;color:#fff;white-space:nowrap;letter-spacing:.3px}
+  .badge.ok{background:var(--green)}.badge.warn{background:var(--amber)}.badge.fail{background:var(--red)}
+  .row-detail{display:block;font-size:.72rem;color:var(--text3);margin-top:2px;font-weight:400}
+  .status-group{margin-bottom:6px}
   .status-group:last-child{margin-bottom:0}
-  .group-heading{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#888;padding:10px 0 4px;border-bottom:1px solid #f0f0f0;margin-bottom:2px}
-  /* tables */
-  table{width:100%;border-collapse:collapse;font-size:.88rem}
-  th{text-align:left;padding:8px 10px;border-bottom:2px solid #e5e7eb;color:#666;font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px}
-  td{padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#333;vertical-align:top}
+  .group-heading{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text3);padding:10px 0 5px;border-bottom:1px solid var(--border);margin-bottom:4px}
+  /* ── tables ── */
+  table{width:100%;border-collapse:collapse;font-size:.86rem}
+  th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text3);font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.7px;background:var(--surface2)}
+  td{padding:9px 12px;border-bottom:1px solid var(--bg);color:var(--text);vertical-align:top}
   tr:last-child td{border-bottom:none}
-  tr:hover td{background:#fafafa}
-  /* misc */
-  .code-block{background:#1e1e2e;color:#cdd6f4;border-radius:8px;padding:16px;font-family:'JetBrains Mono',Menlo,monospace;font-size:.8rem;line-height:1.6;overflow-x:auto;white-space:pre}
-  .key-row{display:flex;align-items:center;gap:8px;background:#f8f9fa;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-family:monospace;font-size:.85rem;color:#333}
-  .pill{display:inline-block;background:#eef2ff;color:#4f46e5;border-radius:12px;padding:2px 10px;font-size:.75rem;font-weight:600}
-  .pill.green{background:#dcfce7;color:#16a34a}
-  .pill.red{background:#fee2e2;color:#dc2626}
-  .pill.amber{background:#fef3c7;color:#92400e}
-  .pill.blue{background:#eff6ff;color:#1d4ed8}
-  .pill.gray{background:#f1f5f9;color:#475569}
-  td.mono{font-family:monospace;font-size:.82rem;color:#555}
-  .empty{color:#999;font-size:.85rem;padding:8px 0}
-  .url-display{font-family:monospace;font-size:.85rem;color:#4f46e5;word-break:break-all}
-  /* account cards */
-  .account-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
-  .account-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:18px;transition:box-shadow .15s}
-  .account-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1)}
-  .account-card .email{font-weight:600;font-size:.9rem;color:#1a1a2e;word-break:break-all}
+  tr:hover td{background:#fafcff}
+  /* ── pills & badges ── */
+  .pill{display:inline-block;border-radius:20px;padding:2px 9px;font-size:.72rem;font-weight:600;letter-spacing:.2px}
+  .pill{background:var(--accent-light);color:var(--accent)}
+  .pill.green{background:var(--green-light);color:var(--green)}
+  .pill.red{background:var(--red-light);color:var(--red)}
+  .pill.amber{background:var(--amber-light);color:var(--amber)}
+  .pill.purple{background:var(--purple-light);color:var(--purple)}
+  .pill.blue{background:var(--accent-light);color:var(--accent)}
+  .pill.gray{background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+  /* ── misc ── */
+  .code-block{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:16px;font-family:'JetBrains Mono',Menlo,monospace;font-size:.78rem;line-height:1.65;overflow-x:auto;white-space:pre}
+  .key-row{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:9px 14px;font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text)}
+  td.mono{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--text2)}
+  td.num{text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:600}
+  td.err{text-align:right;font-family:'JetBrains Mono',monospace;color:var(--red);font-weight:600}
+  .empty{color:var(--text3);font-size:.85rem;padding:10px 0}
+  .url-display{font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--accent);word-break:break-all}
+  .warn-note{background:var(--amber-light);border:1px solid #fde68a;border-radius:7px;padding:10px 14px;font-size:.82rem;color:#92400e;margin-top:12px}
+  /* ── buttons ── */
+  .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:7px;font-size:.82rem;font-weight:600;text-decoration:none;cursor:pointer;border:none;transition:background .15s,box-shadow .15s}
+  .btn-primary{background:var(--accent);color:#fff;box-shadow:0 1px 3px rgba(37,99,235,.3)}
+  .btn-primary:hover{background:var(--accent-hover)}
+  .btn-secondary{background:var(--surface);color:var(--text2);border:1px solid var(--border)}
+  .btn-secondary:hover{background:var(--surface2)}
+  .btn-danger{background:var(--red-light);color:var(--red);border:1px solid #fecaca}
+  .btn-danger:hover{background:#fee2e2}
+  /* ── account cards ── */
+  .account-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+  .account-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;transition:box-shadow .15s,border-color .15s}
+  .account-card:hover{box-shadow:var(--shadow-md);border-color:var(--border-strong)}
+  .account-card .email{font-weight:600;font-size:.875rem;color:var(--text);word-break:break-all;font-family:'JetBrains Mono',monospace}
   .account-card .actions{margin-top:12px;display:flex;gap:8px}
-  .btn{display:inline-block;padding:6px 14px;border-radius:6px;font-size:.82rem;font-weight:600;text-decoration:none;cursor:pointer;border:none}
-  .btn-primary{background:#4f46e5;color:#fff}
-  .btn-primary:hover{background:#4338ca}
-  .btn-danger{background:#fee2e2;color:#dc2626}
-  .btn-danger:hover{background:#fecaca}
-  /* inbox */
-  .back-link{font-size:.85rem;color:#4f46e5;text-decoration:none;display:inline-flex;align-items:center;gap:4px;margin-bottom:16px}
+  /* ── navigation links ── */
+  .back-link{font-size:.82rem;color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;margin-bottom:16px;font-weight:500}
   .back-link:hover{text-decoration:underline}
-  .page-title{font-size:1.1rem;font-weight:700;color:#1a1a2e;margin-bottom:4px}
-  .page-sub{font-size:.82rem;color:#888;margin-bottom:20px}
-  .subject-link{color:#1a1a2e;text-decoration:none;font-weight:500}
-  .subject-link:hover{color:#4f46e5;text-decoration:underline}
-  .attach-icon{color:#f59e0b;font-size:.8rem}
-  /* email detail */
-  .email-meta{background:#f8f9fa;border-radius:8px;padding:16px;margin-bottom:20px}
-  .email-meta-row{display:flex;gap:8px;font-size:.85rem;padding:3px 0}
-  .email-meta-label{font-weight:600;color:#666;width:60px;flex-shrink:0}
-  .email-body{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;font-size:.88rem;line-height:1.7;white-space:pre-wrap;word-break:break-word}
-  /* metrics */
-  .metric-big{font-size:2rem;font-weight:700;color:#1a1a2e;line-height:1}
-  .metric-label{font-size:.78rem;color:#888;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
-  .metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;margin-bottom:20px}
-  .metric-card{background:#f8f9fa;border-radius:8px;padding:16px}
-  .warn-note{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;font-size:.82rem;color:#92400e;margin-top:12px}
-  td.num{text-align:right;font-family:monospace;color:#4f46e5;font-weight:600}
-  td.err{text-align:right;font-family:monospace;color:#dc2626;font-weight:600}
-  /* login */
-  .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f4f6f9}
-  .login-card{background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1);padding:40px;width:100%;max-width:380px}
-  .login-card h1{font-size:1.4rem;font-weight:700;margin-bottom:4px;color:#1a1a2e}
-  .login-card p{color:#888;font-size:.88rem;margin-bottom:28px}
-  label{display:block;font-size:.82rem;font-weight:600;color:#555;margin-bottom:4px}
-  input[type=text],input[type=password]{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;outline:none;transition:border .15s}
-  input:focus{border-color:#4f46e5}
-  .field{margin-bottom:18px}
-  button[type=submit]{width:100%;padding:11px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-size:.95rem;font-weight:600;cursor:pointer}
-  button[type=submit]:hover{background:#2d2d4e}
-  .error-msg{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:10px 14px;font-size:.85rem;margin-bottom:18px}
-  /* Calendar grid */
-  .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:.9rem}
-  .cal-nav a{color:#4f46e5;padding:4px 10px;border:1px solid #e5e7eb;border-radius:6px;text-decoration:none}
-  .cal-nav a:hover{background:#f5f3ff}
-  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border-left:1px solid #e5e7eb;border-top:1px solid #e5e7eb}
-  .cal-header{padding:6px;font-size:.75rem;font-weight:700;color:#888;text-align:center;background:#f8f9fa;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
-  .cal-cell{min-height:80px;padding:4px;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:.75rem;vertical-align:top}
-  .cal-cell.cal-other-month{background:#f9fafb}
-  .cal-cell.cal-today{background:#f5f3ff}
-  .cal-day-num{font-size:.75rem;font-weight:600;color:#888;margin-bottom:2px}
-  details.cal-event{background:#dbeafe;border-radius:3px;margin-bottom:2px;font-size:.72rem;cursor:pointer}
+  .page-title{font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:3px;letter-spacing:-.2px}
+  .page-sub{font-size:.82rem;color:var(--text3);margin-bottom:20px}
+  .subject-link{color:var(--text);text-decoration:none;font-weight:500}
+  .subject-link:hover{color:var(--accent);text-decoration:underline}
+  .attach-icon{color:var(--amber);font-size:.8rem}
+  /* ── email detail ── */
+  .email-meta{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:20px}
+  .email-meta-row{display:flex;gap:8px;font-size:.84rem;padding:3px 0}
+  .email-meta-label{font-weight:600;color:var(--text3);width:60px;flex-shrink:0}
+  .email-body{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:22px;font-size:.875rem;line-height:1.75;white-space:pre-wrap;word-break:break-word;color:var(--text2)}
+  /* ── metrics ── */
+  .metric-big{font-size:2.2rem;font-weight:700;color:var(--text);line-height:1;letter-spacing:-.5px}
+  .metric-label{font-size:.68rem;color:var(--text3);margin-top:5px;text-transform:uppercase;letter-spacing:.9px;font-weight:600}
+  .metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+  .metric-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:18px}
+  /* ── login ── */
+  .login-wrap{display:flex;min-height:100vh;background:var(--text)}
+  .login-left{flex:1;display:flex;flex-direction:column;justify-content:center;padding:48px;max-width:520px}
+  .login-right{flex:1;background:linear-gradient(135deg,#1e3a5f 0%,#0f2744 40%,#091a33 100%);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+  .login-right::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 30% 50%,rgba(37,99,235,.25) 0%,transparent 60%)}
+  .login-card{width:100%;max-width:380px}
+  .login-brand{display:flex;align-items:center;gap:10px;margin-bottom:36px}
+  .login-logo{width:36px;height:36px;background:var(--accent);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff}
+  .login-logo-text{font-size:1.1rem;font-weight:700;color:#fff;letter-spacing:-.2px}
+  .login-card h2{font-size:1.35rem;font-weight:700;color:#fff;margin-bottom:6px;letter-spacing:-.3px}
+  .login-card .subtitle{color:rgba(255,255,255,.45);font-size:.875rem;margin-bottom:28px}
+  label{display:block;font-size:.78rem;font-weight:600;color:rgba(255,255,255,.5);margin-bottom:5px;letter-spacing:.3px;text-transform:uppercase}
+  input[type=text],input[type=password]{width:100%;padding:11px 14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:7px;font-size:.9rem;color:#fff;outline:none;transition:border .15s,background .15s;font-family:'Plus Jakarta Sans',system-ui,sans-serif}
+  input::placeholder{color:rgba(255,255,255,.25)}
+  input:focus{border-color:rgba(37,99,235,.7);background:rgba(255,255,255,.09)}
+  .field{margin-bottom:16px}
+  button[type=submit]{width:100%;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:.9rem;font-weight:700;cursor:pointer;letter-spacing:.1px;transition:background .15s,box-shadow .15s;font-family:'Plus Jakarta Sans',system-ui,sans-serif;box-shadow:0 2px 8px rgba(37,99,235,.4)}
+  button[type=submit]:hover{background:var(--accent-hover);box-shadow:0 4px 14px rgba(37,99,235,.5)}
+  .error-msg{background:rgba(220,38,38,.15);color:#fca5a5;border:1px solid rgba(220,38,38,.3);border-radius:7px;padding:10px 14px;font-size:.84rem;margin-bottom:16px}
+  .login-hint{margin-top:24px;padding:12px 16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:8px;font-size:.78rem;color:rgba(255,255,255,.4);line-height:1.6}
+  .login-hint code{background:rgba(255,255,255,.1);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,.65);font-size:.76rem}
+  .login-art-text{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:rgba(255,255,255,.2);text-align:center;line-height:1.8;padding:32px;max-width:360px}
+  /* ── calendar ── */
+  .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:.875rem}
+  .cal-nav a{color:var(--accent);padding:4px 12px;border:1px solid var(--border);border-radius:6px;text-decoration:none;font-size:.82rem;font-weight:500}
+  .cal-nav a:hover{background:var(--accent-light)}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border-left:1px solid var(--border);border-top:1px solid var(--border)}
+  .cal-header{padding:6px;font-size:.7rem;font-weight:700;color:var(--text3);text-align:center;background:var(--surface2);border-right:1px solid var(--border);border-bottom:1px solid var(--border)}
+  .cal-cell{min-height:80px;padding:4px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);font-size:.75rem}
+  .cal-cell.cal-other-month{background:var(--bg)}
+  .cal-cell.cal-today{background:var(--accent-light)}
+  .cal-day-num{font-size:.72rem;font-weight:600;color:var(--text3);margin-bottom:2px}
+  details.cal-event{background:#dbeafe;border-radius:3px;margin-bottom:2px;font-size:.7rem;cursor:pointer}
   details.cal-event summary{padding:2px 5px;list-style:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#1d4ed8;font-weight:500}
   details.cal-event summary::-webkit-details-marker{display:none}
   details.cal-event[open] summary{background:#bfdbfe;white-space:normal}
-  details.cal-event.cal-past{background:#f1f5f9}
-  details.cal-event.cal-past summary{color:#64748b}
-  .cal-detail{padding:6px 8px;border-top:1px solid rgba(0,0,0,.08);background:#fff;font-size:.77rem;line-height:1.5;color:#374151}
-  /* Week view */
-  .week-container{border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-top:4px}
-  .week-head{display:grid;grid-template-columns:52px repeat(7,1fr);background:#f8f9fa;border-bottom:2px solid #e5e7eb;position:sticky;top:0;z-index:20}
-  .week-head-cell{padding:7px 4px;text-align:center;font-size:.78rem;border-left:1px solid #e5e7eb;line-height:1.4}
+  details.cal-event.cal-past{background:var(--surface2)}
+  details.cal-event.cal-past summary{color:var(--text3)}
+  .cal-detail{padding:6px 8px;border-top:1px solid rgba(0,0,0,.06);background:var(--surface);font-size:.75rem;line-height:1.5;color:var(--text2)}
+  /* ── week view ── */
+  .week-container{border:1px solid var(--border);border-radius:7px;overflow:hidden;margin-top:4px}
+  .week-head{display:grid;grid-template-columns:52px repeat(7,1fr);background:var(--surface2);border-bottom:2px solid var(--border);position:sticky;top:0;z-index:20}
+  .week-head-cell{padding:7px 4px;text-align:center;font-size:.75rem;border-left:1px solid var(--border);line-height:1.4}
+  .view-toggle{display:flex;gap:4px;margin-bottom:14px}
+  .view-toggle a{padding:5px 16px;border-radius:6px;font-size:.8rem;font-weight:500;text-decoration:none;border:1px solid var(--border);color:var(--text2);background:var(--surface)}
+  .view-toggle a.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  /* ── week view extras (not covered by the block above) ── */
   .week-head-cell:first-child{border-left:none}
-  .week-head-cell.week-today-hd{background:#ede9fe;color:#4f46e5;font-weight:700}
+  .week-head-cell.week-today-hd{background:#ede9fe;color:var(--accent);font-weight:700}
   .week-scroll{overflow-y:auto;max-height:580px}
   .week-body{display:grid;grid-template-columns:52px repeat(7,1fr);position:relative}
-  .week-time-col{display:flex;flex-direction:column;background:#fafafa;border-right:1px solid #e5e7eb}
-  .week-time-label{height:48px;padding:3px 6px 0 0;text-align:right;font-size:.68rem;color:#aaa;flex-shrink:0}
-  .week-day-col{position:relative;min-height:1152px;border-left:1px solid #e5e7eb}
+  .week-time-col{display:flex;flex-direction:column;background:var(--surface2);border-right:1px solid var(--border)}
+  .week-time-label{height:48px;padding:3px 6px 0 0;text-align:right;font-size:.68rem;color:var(--text3);flex-shrink:0}
+  .week-day-col{position:relative;min-height:1152px;border-left:1px solid var(--border)}
   .week-day-col.week-today-col{background:#fdfcff}
-  .week-hr{position:absolute;left:0;right:0;border-top:1px solid #f0f0f0;pointer-events:none}
-  .week-hr.major{border-top-color:#e5e7eb}
+  .week-hr{position:absolute;left:0;right:0;border-top:1px solid var(--bg);pointer-events:none}
+  .week-hr.major{border-top-color:var(--border)}
   details.week-ev{position:absolute;border-radius:4px;overflow:hidden;font-size:.72rem;cursor:pointer;background:#dbeafe;border-left:3px solid #3b82f6;padding:2px 4px;z-index:1}
   details.week-ev summary{list-style:none;font-weight:500;color:#1d4ed8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
   details.week-ev summary::-webkit-details-marker{display:none}
   details.week-ev[open]{z-index:10;overflow:visible}
   details.week-ev[open] summary{white-space:normal}
-  details.week-ev.past{background:#f1f5f9;border-left-color:#94a3b8}
-  details.week-ev.past summary{color:#64748b}
-  .week-ev-detail{margin-top:3px;color:#374151;font-size:.71rem;line-height:1.4;background:#fff;border-radius:0 0 3px 3px;padding:4px;border-top:1px solid rgba(0,0,0,.08)}
-  .week-now-line{position:absolute;left:0;right:0;height:0;border-top:2px solid #ef4444;z-index:5;pointer-events:none}
-  .week-now-dot{position:absolute;left:-5px;top:-5px;width:9px;height:9px;background:#ef4444;border-radius:50%}
-  .view-toggle{display:flex;gap:4px;margin-bottom:14px}
-  .view-toggle a{padding:5px 16px;border-radius:6px;font-size:.82rem;font-weight:500;text-decoration:none;border:1px solid #e5e7eb;color:#555;background:#fff}
-  .view-toggle a.active{background:#4f46e5;color:#fff;border-color:#4f46e5}
+  details.week-ev.past{background:var(--surface2);border-left-color:var(--text3)}
+  details.week-ev.past summary{color:var(--text3)}
+  .week-ev-detail{margin-top:3px;color:var(--text2);font-size:.71rem;line-height:1.4;background:var(--surface);border-radius:0 0 3px 3px;padding:4px;border-top:1px solid rgba(0,0,0,.06)}
+  .week-now-line{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--red);z-index:5;pointer-events:none}
+  .week-now-dot{position:absolute;left:-5px;top:-5px;width:9px;height:9px;background:var(--red);border-radius:50%}
 `;
 
 function page(title: string, body: string): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Clawmail</title><style>${CSS}</style></head><body>${body}</body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Clawmail</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>${body}</body></html>`;
 }
 
-function topbar(extra = ""): string {
-  return `<div class="topbar"><h1>Clawmail</h1><div style="display:flex;align-items:center;gap:20px"><span>${escHtml(config.domain)}</span>${extra}<a href="/dashboard/logout">Sign out</a></div></div>`;
+function topbar(): string {
+  return `
+    <div class="topbar">
+      <a class="topbar-brand" href="/dashboard">
+        <div class="topbar-logo">C</div>
+        <h1>Clawmail</h1>
+      </a>
+      <div class="topbar-right">
+        <span class="topbar-domain">${escHtml(config.domain)}</span>
+        <a class="topbar-signout" href="/dashboard/logout">Sign out</a>
+      </div>
+    </div>`;
 }
 
 function tabBar(active: string): string {
   const tabs = [
-    { id: "overview",      label: "Overview",           href: "/dashboard" },
-    { id: "inboxes",       label: "Inboxes",             href: "/dashboard?tab=inboxes" },
-    { id: "metrics",       label: "Metrics",             href: "/dashboard?tab=metrics" },
-    { id: "tokens",        label: "🔑 Tokens",           href: "/dashboard?tab=tokens" },
-    { id: "calendars",     label: "Calendars & Rules",   href: "/dashboard?tab=calendars" },
-    { id: "storage",       label: "Storage",             href: "/dashboard?tab=storage" },
-    { id: "integrations",  label: "⚙ Integrations",     href: "/dashboard?tab=integrations" },
+    { id: "overview",      label: "Overview",          icon: "◈",  href: "/dashboard" },
+    { id: "inboxes",       label: "Inboxes",            icon: "✉",  href: "/dashboard?tab=inboxes" },
+    { id: "metrics",       label: "Metrics",            icon: "◎",  href: "/dashboard?tab=metrics" },
+    { id: "tokens",        label: "Tokens",             icon: "⬡",  href: "/dashboard?tab=tokens" },
+    { id: "calendars",     label: "Calendars",          icon: "▦",  href: "/dashboard?tab=calendars" },
+    { id: "storage",       label: "Storage",            icon: "▣",  href: "/dashboard?tab=storage" },
+    { id: "integrations",  label: "Integrations",       icon: "⚙",  href: "/dashboard?tab=integrations" },
   ];
   const links = tabs.map(t =>
-    `<a href="${t.href}" class="${active === t.id ? "active" : ""}">${t.label}</a>`
+    `<a href="${t.href}" class="${active === t.id ? "active" : ""}"><span class="tab-icon">${t.icon}</span>${t.label}</a>`
   ).join("");
   return `<nav class="tab-bar">${links}</nav>`;
 }
@@ -291,15 +347,37 @@ function loginPage(error?: string): string {
   const err = error ? `<div class="error-msg">${escHtml(error)}</div>` : "";
   return page("Login", `
     <div class="login-wrap">
-      <div class="login-card">
-        <h1>Clawmail</h1>
-        <p>Sign in to the operator dashboard</p>
-        ${err}
-        <form method="POST" action="/dashboard/login">
-          <div class="field"><label>Username</label><input type="text" name="user" autocomplete="username" required></div>
-          <div class="field"><label>Password</label><input type="password" name="pass" autocomplete="current-password" required></div>
-          <button type="submit">Sign in</button>
-        </form>
+      <div class="login-left">
+        <div class="login-card">
+          <div class="login-brand">
+            <div class="login-logo">C</div>
+            <span class="login-logo-text">Clawmail</span>
+          </div>
+          <h2>Operator Dashboard</h2>
+          <p class="subtitle">Sign in with your admin credentials to continue.</p>
+          ${err}
+          <form method="POST" action="/dashboard/login">
+            <div class="field"><label>Username</label><input type="text" name="user" autocomplete="username" placeholder="admin" required></div>
+            <div class="field"><label>Password</label><input type="password" name="pass" autocomplete="current-password" placeholder="••••••••" required></div>
+            <button type="submit">Sign in →</button>
+          </form>
+          <div class="login-hint">
+            Use <code>DASHBOARD_PASSWORD</code> if set, otherwise falls back to <code>STALWART_ADMIN_PASSWORD</code>.
+          </div>
+        </div>
+      </div>
+      <div class="login-right">
+        <div class="login-art-text">
+          create_account<br>
+          list_emails<br>
+          send_email<br>
+          read_email<br>
+          delete_email<br>
+          search_emails<br>
+          manage_token<br>
+          list_accounts<br>
+          delete_account
+        </div>
       </div>
     </div>
   `);
@@ -1395,7 +1473,7 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
   const storedClientId   = config.googleMeet.clientId || smClientId || "";
 
   const flashHtml = flash
-    ? `<div style="margin-bottom:20px;padding:12px 16px;border-radius:8px;font-size:.88rem;font-weight:500;${flash.type === "ok" ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}">${flash.type === "ok" ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`
+    ? `<div style="margin-bottom:16px;padding:12px 16px;border-radius:var(--radius);font-size:.88rem;font-weight:500;${flash.type === "ok" ? "background:var(--green-light);color:#065f46;border:1px solid #6ee7b7" : "background:var(--red-light);color:#991b1b;border:1px solid #fca5a5"}">${flash.type === "ok" ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`
     : "";
 
   // ── Daily.co card ───────────────────────────────────────────────────────────
@@ -1568,29 +1646,27 @@ async function buildTokensTab(accounts: Array<{ email: string; name: string }>):
   const tokenRows = allTokens.map((t) => {
     const isKnownAccount = accountEmails.has(t.account.toLowerCase());
     const roleBadge = t.role === "admin"
-      ? `<span style="background:#7c3aed;color:#fff;padding:1px 7px;border-radius:10px;font-size:.73rem;font-weight:600">admin</span>`
-      : `<span style="background:#2563eb;color:#fff;padding:1px 7px;border-radius:10px;font-size:.73rem;font-weight:600">user</span>`;
+      ? `<span class="pill purple">admin</span>`
+      : `<span class="pill blue">user</span>`;
     return `
-      <tr style="border-bottom:1px solid #f3f4f6">
-        <td style="font-family:monospace;font-size:.8rem;padding:8px 8px 8px 0;color:#6b7280">${escHtml(t.tokenId.slice(0, 8))}…</td>
-        <td style="padding:8px">${escHtml(t.account)}${!isKnownAccount ? ' <span style="color:#f59e0b;font-size:.75rem">(unknown)</span>' : ""}</td>
-        <td style="padding:8px">${roleBadge}</td>
-        <td style="padding:8px;font-size:.82rem;color:#666">${escHtml(t.label ?? "—")}</td>
-        <td style="padding:8px;font-size:.78rem;color:#888;white-space:nowrap">${escHtml(new Date(t.createdAt).toLocaleDateString())}</td>
-        <td style="padding:8px;white-space:nowrap;text-align:right">
+      <tr>
+        <td class="mono">${escHtml(t.tokenId.slice(0, 8))}…</td>
+        <td class="mono" style="font-size:.8rem">${escHtml(t.account)}${!isKnownAccount ? ' <span class="pill amber" style="vertical-align:middle">unknown</span>' : ""}</td>
+        <td>${roleBadge}</td>
+        <td style="color:var(--text2);font-size:.82rem">${escHtml(t.label ?? "—")}</td>
+        <td style="color:var(--text3);font-size:.78rem;white-space:nowrap">${escHtml(new Date(t.createdAt).toLocaleDateString())}</td>
+        <td style="white-space:nowrap;text-align:right">
           <form method="POST" action="/dashboard/tokens/generate" style="display:inline;margin-right:6px">
             <input type="hidden" name="account" value="${escHtml(t.account)}">
             <input type="hidden" name="label" value="regen">
-            <button type="submit" title="Generate a new token for this account"
-              style="padding:3px 9px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;font-size:.78rem;cursor:pointer;font-weight:600">
-              + New Token
+            <button type="submit" class="btn btn-secondary" title="Generate a new token for this account" style="font-size:.75rem;padding:4px 10px">
+              + Token
             </button>
           </form>
           <form method="POST" action="/dashboard/tokens/revoke" style="display:inline"
                 onsubmit="return confirm('Revoke this token? The agent will immediately lose access.')">
             <input type="hidden" name="token_id" value="${escHtml(t.tokenId)}">
-            <button type="submit"
-              style="padding:3px 9px;background:#fff5f5;color:#dc2626;border:1px solid #fca5a5;border-radius:4px;font-size:.78rem;cursor:pointer;font-weight:600">
+            <button type="submit" class="btn btn-danger" style="font-size:.75rem;padding:4px 10px">
               Revoke
             </button>
           </form>
@@ -1599,20 +1675,10 @@ async function buildTokensTab(accounts: Array<{ email: string; name: string }>):
   }).join("");
 
   const tokensTable = allTokens.length > 0
-    ? `<table style="width:100%;border-collapse:collapse;font-size:.87rem">
-         <thead>
-           <tr style="border-bottom:2px solid #e5e7eb;color:#6b7280;font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.4px">
-             <th style="text-align:left;padding:6px 8px 6px 0">ID</th>
-             <th style="text-align:left;padding:6px 8px">Account</th>
-             <th style="text-align:left;padding:6px 8px">Role</th>
-             <th style="text-align:left;padding:6px 8px">Label</th>
-             <th style="text-align:left;padding:6px 8px">Created</th>
-             <th></th>
-           </tr>
-         </thead>
-         <tbody>${tokenRows}</tbody>
-       </table>`
-    : `<p style="color:#666;font-size:.9rem;margin:0">${loadError ? `Error loading tokens: ${escHtml(loadError)}` : "No tokens yet. Create accounts to auto-generate tokens, or use the form below."}</p>`;
+    ? `<table><thead><tr>
+         <th>ID</th><th>Account</th><th>Role</th><th>Label</th><th>Created</th><th></th>
+       </tr></thead><tbody>${tokenRows}</tbody></table>`
+    : `<p class="empty">${loadError ? `Error loading tokens: ${escHtml(loadError)}` : "No tokens yet. Create accounts to auto-generate tokens, or use the form below."}</p>`;
 
   // Build account options for the generate form
   const accountOptions = accounts
@@ -1620,35 +1686,30 @@ async function buildTokensTab(accounts: Array<{ email: string; name: string }>):
     .join("");
 
   // ---------------------------------------------------------------------------
-  // Admin tokens section — show plaintext with mask/reveal + copy
+  // Admin tokens section — reveal via server-side fetch (plaintext never in DOM).
   // ---------------------------------------------------------------------------
   const adminTokenList = [...config.auth.adminTokens];
   const adminTokensHtml = config.auth.adminTokens.size > 0
-    ? `<div class="card" style="margin-top:16px;border-left:4px solid #7c3aed">
-         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-           <div>
-             <h3 style="margin:0 0 2px;font-size:1rem;font-weight:600">Static Admin Tokens</h3>
-             <p style="margin:0;font-size:.83rem;color:#6b7280">
-               From <code>MCP_ADMIN_TOKENS</code> — bypass all account scoping. Treat these as root credentials.
-             </p>
-           </div>
-         </div>
+    ? `<div class="card" style="border-left:3px solid var(--purple)">
+         <h2 style="margin-bottom:4px">Static Admin Tokens</h2>
+         <p style="color:var(--text3);font-size:.82rem;margin-bottom:14px">
+           From <code>MCP_ADMIN_TOKENS</code> — bypass all account scoping. Treat these as root credentials.
+         </p>
          <div style="display:flex;flex-direction:column;gap:8px">
            ${adminTokenList.map((tok, i) => {
+             // Only store the masked preview — never the plaintext — in the DOM.
+             // The Reveal button fetches /dashboard/tokens/reveal?i=N from the server,
+             // which returns the plaintext only when the session cookie is valid.
              const masked = tok.slice(0, 8) + "••••••••••••••••••••••••" + tok.slice(-6);
              const safeId = `adm-${i}`;
              return `
-               <div style="display:flex;align-items:center;gap:8px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;padding:8px 10px">
-                 <code id="${safeId}-display" data-plaintext="${escHtml(tok)}" data-masked="${escHtml(masked)}"
-                   style="flex:1;font-size:.82rem;word-break:break-all;color:#581c87">${escHtml(masked)}</code>
-                 <button onclick="toggleAdminToken('${safeId}')" id="${safeId}-eye"
-                   title="Reveal / hide"
-                   style="flex-shrink:0;padding:3px 9px;background:#fff;border:1px solid #d1d5db;border-radius:5px;font-size:.78rem;cursor:pointer">
-                   👁 Reveal
+               <div style="display:flex;align-items:center;gap:8px;background:var(--purple-light);border:1px solid #ddd6fe;border-radius:7px;padding:9px 12px">
+                 <code id="${safeId}-display" data-index="${i}" data-masked="${escHtml(masked)}"
+                   style="flex:1;font-size:.8rem;word-break:break-all;font-family:'JetBrains Mono',monospace;color:var(--purple)">${escHtml(masked)}</code>
+                 <button onclick="toggleAdminToken('${safeId}')" id="${safeId}-eye" class="btn btn-secondary" style="flex-shrink:0;padding:4px 10px;font-size:.76rem">
+                   Reveal
                  </button>
-                 <button onclick="copyAdminToken('${safeId}')" id="${safeId}-copy"
-                   title="Copy to clipboard"
-                   style="flex-shrink:0;padding:3px 9px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-weight:600">
+                 <button onclick="copyAdminToken('${safeId}')" id="${safeId}-copy" class="btn btn-primary" style="flex-shrink:0;padding:4px 10px;font-size:.76rem;background:var(--purple)" disabled>
                    Copy
                  </button>
                </div>`;
@@ -1656,19 +1717,38 @@ async function buildTokensTab(accounts: Array<{ email: string; name: string }>):
          </div>
        </div>
        <script>
-         function toggleAdminToken(id) {
+         async function toggleAdminToken(id) {
            const el = document.getElementById(id + '-display');
-           const btn = document.getElementById(id + '-eye');
-           if (el.textContent.includes('•')) {
-             el.textContent = el.dataset.plaintext;
-             btn.textContent = '🙈 Hide';
-           } else {
+           const eye = document.getElementById(id + '-eye');
+           const copyBtn = document.getElementById(id + '-copy');
+           if (el.dataset.revealed === '1') {
              el.textContent = el.dataset.masked;
-             btn.textContent = '👁 Reveal';
+             delete el.dataset.revealed;
+             eye.textContent = 'Reveal';
+             copyBtn.disabled = true;
+             return;
+           }
+           eye.textContent = '…';
+           eye.disabled = true;
+           try {
+             const res = await fetch('/dashboard/tokens/reveal?i=' + el.dataset.index);
+             if (!res.ok) throw new Error('Unauthorized');
+             const { token } = await res.json();
+             el.textContent = token;
+             el.dataset.revealed = '1';
+             el.dataset.live = token;
+             eye.textContent = 'Hide';
+             copyBtn.disabled = false;
+           } catch {
+             eye.textContent = 'Reveal';
+           } finally {
+             eye.disabled = false;
            }
          }
          function copyAdminToken(id) {
-           const tok = document.getElementById(id + '-display').dataset.plaintext;
+           const el = document.getElementById(id + '-display');
+           const tok = el.dataset.live;
+           if (!tok) return;
            navigator.clipboard.writeText(tok).then(() => {
              const btn = document.getElementById(id + '-copy');
              btn.textContent = 'Copied!';
@@ -1676,42 +1756,41 @@ async function buildTokensTab(accounts: Array<{ email: string; name: string }>):
            });
          }
        </script>`
-    : `<div class="card" style="margin-top:16px;border-left:4px solid #e5e7eb">
-         <h3 style="margin:0 0 4px;font-size:1rem;font-weight:600;color:#6b7280">Static Admin Tokens</h3>
-         <p style="margin:0;font-size:.85rem;color:#9ca3af">
+    : `<div class="card" style="border-left:3px solid var(--border)">
+         <h2 style="margin-bottom:4px">Static Admin Tokens</h2>
+         <p style="color:var(--text3);font-size:.85rem;margin:0">
            No <code>MCP_ADMIN_TOKENS</code> configured. Set this env var to add a permanent admin credential.
          </p>
        </div>`;
 
   return `
-    <div style="max-width:920px;margin:24px 0">
+    <div style="display:grid;gap:16px">
       <div class="card">
-        <h2 style="margin:0 0 4px;font-size:1.1rem;font-weight:600">Account Tokens</h2>
-        <p style="margin:0 0 16px;color:#6b7280;font-size:.88rem">
+        <h2>Account Tokens</h2>
+        <p style="color:var(--text3);font-size:.84rem;margin-bottom:16px">
           Per-account credentials returned by <code>create_account</code>.
           Agents pass them as the <code>token</code> parameter.
-          Tokens are stored hashed — use <strong>+ New Token</strong> to issue a fresh one for any account.
+          Tokens are stored hashed — use <strong>+ Token</strong> to issue a fresh one.
         </p>
         ${tokensTable}
       </div>
 
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin:0 0 12px;font-size:1rem;font-weight:600">Generate New Token</h3>
+      <div class="card">
+        <h2>Generate New Token</h2>
         <form method="POST" action="/dashboard/tokens/generate" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:1;min-width:200px">
-            <label style="display:block;font-size:.82rem;color:#374151;margin-bottom:4px">Account</label>
-            <select name="account" required style="width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem">
+            <label style="display:block;font-size:.78rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px">Account</label>
+            <select name="account" required style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:.88rem;background:var(--surface);color:var(--text);font-family:'Plus Jakarta Sans',system-ui,sans-serif">
               <option value="">— select account —</option>
               ${accountOptions}
             </select>
           </div>
           <div style="flex:1;min-width:160px">
-            <label style="display:block;font-size:.82rem;color:#374151;margin-bottom:4px">Label (optional)</label>
+            <label style="display:block;font-size:.78rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px">Label (optional)</label>
             <input type="text" name="label" placeholder="e.g. agent-v2"
-              style="width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;box-sizing:border-box">
+              style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:.88rem;background:var(--surface);color:var(--text);font-family:'Plus Jakarta Sans',system-ui,sans-serif">
           </div>
-          <button type="submit"
-            style="padding:8px 18px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;white-space:nowrap">
+          <button type="submit" class="btn btn-primary" style="white-space:nowrap">
             Generate Token
           </button>
         </form>
@@ -2262,20 +2341,20 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<Flas
   let flashBanner = "";
   if (flash) {
     const isOk = flash.type === "ok";
-    const baseStyle = `margin:12px 0 0;padding:12px 16px;border-radius:8px;font-size:.88rem;font-weight:500;${isOk ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}`;
+    const bannerCls = isOk
+      ? "background:var(--green-light);color:#065f46;border:1px solid #6ee7b7"
+      : "background:var(--red-light);color:#991b1b;border:1px solid #fca5a5";
     if (flash.token) {
-      // Rich token banner: show the plaintext in a monospace copyable field.
       flashBanner = `
-        <div style="${baseStyle}">
-          <div style="margin-bottom:8px">${isOk ? "✓" : "✗"} ${escHtml(flash.msg)}</div>
-          <div style="display:flex;gap:8px;align-items:center;background:rgba(0,0,0,.06);border-radius:6px;padding:8px 10px">
-            <code id="flash-token" style="flex:1;font-size:.82rem;word-break:break-all;user-select:all">${escHtml(flash.token)}</code>
-            <button onclick="copyFlashToken()" id="flash-copy-btn"
-              style="flex-shrink:0;padding:4px 10px;background:#166534;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-weight:600">
+        <div style="padding:14px 16px;border-radius:var(--radius);font-size:.88rem;${bannerCls}">
+          <div style="font-weight:600;margin-bottom:10px">${isOk ? "✓" : "✗"} ${escHtml(flash.msg)}</div>
+          <div style="display:flex;gap:8px;align-items:center;background:rgba(0,0,0,.07);border-radius:7px;padding:9px 12px">
+            <code id="flash-token" style="flex:1;font-size:.8rem;word-break:break-all;user-select:all;font-family:'JetBrains Mono',monospace">${escHtml(flash.token)}</code>
+            <button onclick="copyFlashToken()" id="flash-copy-btn" class="btn btn-primary" style="flex-shrink:0;font-size:.76rem;padding:5px 12px">
               Copy
             </button>
           </div>
-          <div style="margin-top:6px;font-size:.78rem;opacity:.8">Save this token — it will not be shown again.</div>
+          <div style="margin-top:8px;font-size:.76rem;opacity:.75;font-weight:500">⚠ Save this token — it will not be shown again.</div>
         </div>
         <script>
           function copyFlashToken() {
@@ -2283,15 +2362,14 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<Flas
             navigator.clipboard.writeText(t).then(() => {
               const btn = document.getElementById('flash-copy-btn');
               btn.textContent = 'Copied!';
-              btn.style.background = '#14532d';
-              setTimeout(() => { btn.textContent = 'Copy'; btn.style.background = '#166534'; }, 2000);
+              setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
             }).catch(() => {
               document.getElementById('flash-token').select && document.getElementById('flash-token').select();
             });
           }
         </script>`;
     } else {
-      flashBanner = `<div style="${baseStyle};white-space:pre-wrap;word-break:break-all">${isOk ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`;
+      flashBanner = `<div style="padding:12px 16px;border-radius:var(--radius);font-size:.88rem;font-weight:500;white-space:pre-wrap;word-break:break-all;${bannerCls}">${isOk ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`;
     }
   }
 
@@ -2705,6 +2783,22 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   }
 
   // ── Token routes ───────────────────────────────────────────────────────────
+
+  // GET /dashboard/tokens/reveal?i=N — server-side reveal for static admin token N.
+  // Plaintext is returned via authenticated JSON fetch; never embedded in HTML.
+  if (path === "/dashboard/tokens/reveal" && req.method === "GET") {
+    const idxStr = url.searchParams.get("i") ?? "";
+    const idx = parseInt(idxStr, 10);
+    const adminTokenList = [...config.auth.adminTokens];
+    if (isNaN(idx) || idx < 0 || idx >= adminTokenList.length) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ token: adminTokenList[idx] }));
+    return;
+  }
 
   // POST /dashboard/tokens/generate — create a new token for an account
   if (path === "/dashboard/tokens/generate" && req.method === "POST") {

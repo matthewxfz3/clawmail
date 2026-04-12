@@ -1150,12 +1150,9 @@ function createMcpServer(caller: CallerIdentity): McpServer {
     },
     async (args) => {
       recordCall("manage_token");
-      if (!checkRateLimit("manage_token", apiKey, config.limits.readOpsPerMinute, 60 * 1000)) {
-        recordRateLimit("manage_token");
-        return rateLimitErr("manage_token");
-      }
 
-      // Resolve the caller's own identity — either via token or X-API-Key
+      // Resolve caller identity first so we can rate-limit per-account
+      // rather than per-service-key (prevents one agent starving others).
       let callerAccount: string | null = null;
       let callerIsAdmin = caller.role === "admin";
 
@@ -1172,6 +1169,13 @@ function createMcpServer(caller: CallerIdentity): McpServer {
         if (caller.role === "user") {
           callerAccount = caller.account ?? null;
         }
+      }
+
+      // Rate-limit by resolved account (falls back to service key for admin with no bound account).
+      const manageTokenRlKey = callerAccount ?? apiKey;
+      if (!checkRateLimit("manage_token", manageTokenRlKey, config.limits.readOpsPerMinute, 60 * 1000)) {
+        recordRateLimit("manage_token");
+        return rateLimitErr("manage_token");
       }
 
       try {

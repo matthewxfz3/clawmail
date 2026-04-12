@@ -24,7 +24,7 @@ clawmail/
 │       ├── config.ts            ← all env vars in one place
 │       ├── auth.ts              ← API key parsing, CallerIdentity, role-based authorization
 │       ├── metrics.ts           ← in-memory tool call metrics
-│       ├── dashboard.ts         ← web dashboard (overview, inboxes, metrics)
+│       ├── dashboard.ts         ← web dashboard (overview, inboxes, metrics, tokens)
 │       ├── clients/
 │       │   ├── stalwart-mgmt.ts ← Stalwart Management REST API client
 │       │   └── jmap.ts          ← JMAP client (mailbox read/search/delete)
@@ -86,11 +86,13 @@ Clawmail uses **two independent auth layers**:
 5. Agent calls send_email({ token: "tok_abc...", to: "user@gmail.com", ... })
 ```
 
-**Admin tokens** (`MCP_ADMIN_TOKENS` env var): comma-separated static tokens that work for any account and bypass all scoping. Treat like root credentials.
+**Admin tokens** (`MCP_ADMIN_TOKENS` env var): comma-separated static tokens that work for any account and bypass all scoping. Treat like root credentials. The dashboard "Tokens" tab shows these masked and reveals them via a server-side fetch (`/dashboard/tokens/reveal?i=N`) — the plaintext is **never embedded in the page HTML**.
 
 **Token storage**: persisted as JMAP emails in the `_tokens` system mailbox of the `clawmail-system@{domain}` service account. SHA-256 hashed — plaintext never stored. In-memory cache with 60-second TTL.
 
 **`clawmail-system` account**: reserved system account used to store tokens. Do NOT delete it via `delete_account`.
+
+**Rate limiting**: all account-scoped tools rate-limit by the resolved `account` (not the shared `X-API-Key`). `manage_token` resolves the caller identity first, then rate-limits — one agent cannot exhaust the bucket for others.
 
 ---
 
