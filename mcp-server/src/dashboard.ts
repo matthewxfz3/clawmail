@@ -187,7 +187,7 @@ const CSS = `
   /* ── tables ── */
   table{width:100%;border-collapse:collapse;font-size:.86rem}
   th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text3);font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.7px;background:var(--surface2)}
-  td{padding:9px 12px;border-bottom:1px solid var(--bg);color:var(--text);vertical-align:top}
+  td{padding:9px 12px;border-bottom:1px solid var(--bg);color:var(--text);vertical-align:middle}
   tr:last-child td{border-bottom:none}
   tr:hover td{background:#fafcff}
   /* ── pills & badges ── */
@@ -1655,21 +1655,23 @@ async function buildTokensTab(accounts: Array<{ email: string; name: string }>):
         <td>${roleBadge}</td>
         <td style="color:var(--text2);font-size:.82rem">${escHtml(t.label ?? "—")}</td>
         <td style="color:var(--text3);font-size:.78rem;white-space:nowrap">${escHtml(new Date(t.createdAt).toLocaleDateString())}</td>
-        <td style="white-space:nowrap;text-align:right">
-          <form method="POST" action="/dashboard/tokens/generate" style="display:inline;margin-right:6px">
-            <input type="hidden" name="account" value="${escHtml(t.account)}">
-            <input type="hidden" name="label" value="regen">
-            <button type="submit" class="btn btn-secondary" title="Generate a new token for this account" style="font-size:.75rem;padding:4px 10px">
-              + Token
-            </button>
-          </form>
-          <form method="POST" action="/dashboard/tokens/revoke" style="display:inline"
-                onsubmit="return confirm('Revoke this token? The agent will immediately lose access.')">
-            <input type="hidden" name="token_id" value="${escHtml(t.tokenId)}">
-            <button type="submit" class="btn btn-danger" style="font-size:.75rem;padding:4px 10px">
-              Revoke
-            </button>
-          </form>
+        <td>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+            <form method="POST" action="/dashboard/tokens/generate" style="margin:0">
+              <input type="hidden" name="account" value="${escHtml(t.account)}">
+              <input type="hidden" name="label" value="regen">
+              <button type="submit" class="btn btn-secondary" title="Generate a new token for this account" style="font-size:.75rem;padding:4px 10px;white-space:nowrap">
+                + Token
+              </button>
+            </form>
+            <form method="POST" action="/dashboard/tokens/revoke" style="margin:0"
+                  onsubmit="return confirm('Revoke this token? The agent will immediately lose access.')">
+              <input type="hidden" name="token_id" value="${escHtml(t.tokenId)}">
+              <button type="submit" class="btn btn-danger" style="font-size:.75rem;padding:4px 10px;white-space:nowrap">
+                Revoke
+              </button>
+            </form>
+          </div>
         </td>
       </tr>`;
   }).join("");
