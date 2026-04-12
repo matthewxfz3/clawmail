@@ -75,7 +75,7 @@ describe("authorize", () => {
   const user: CallerIdentity = { apiKey: "uk", role: "user", account: "bob@example.com" };
 
   it("admin is always allowed for admin-only tools", () => {
-    expect(authorize(admin, "create_account")).toBeNull();
+    // create_account is no longer admin-only — any authenticated caller can use it
     expect(authorize(admin, "delete_account")).toBeNull();
     expect(authorize(admin, "list_accounts")).toBeNull();
   });
@@ -86,12 +86,25 @@ describe("authorize", () => {
   });
 
   it("user is denied admin-only tools", () => {
-    const err = authorize(user, "create_account");
+    const err = authorize(user, "delete_account");
     expect(err).not.toBeNull();
     expect(err!.isError).toBe(true);
     const msg = err!.content[0];
     expect(msg.type).toBe("text");
     expect((msg as { type: "text"; text: string }).text).toMatch(/admin/i);
+  });
+
+  it("create_account is NOT in ADMIN_ONLY_TOOLS (index.ts bypasses authorize() for it entirely)", () => {
+    // create_account is open to all authenticated callers in index.ts — authorize() is not called.
+    // We verify it's not blocked as an "admin-only tool" by checking it doesn't return the
+    // admin-privileges message.  (It does return a "no target account" error because
+    // create_account has no targetAccount, but that guard is also never reached in index.ts.)
+    const err = authorize(user, "create_account");
+    // Must not be a "requires admin privileges" denial
+    if (err) {
+      const text = (err.content[0] as { type: "text"; text: string }).text;
+      expect(text).not.toMatch(/requires admin/i);
+    }
   });
 
   it("user is denied for delete_account", () => {
@@ -100,6 +113,17 @@ describe("authorize", () => {
 
   it("user is denied for list_accounts", () => {
     expect(authorize(user, "list_accounts")).not.toBeNull();
+  });
+
+  it("manage_token is not in ADMIN_ONLY_TOOLS — its handler does inline auth allowing user self-service", () => {
+    // manage_token has its own inline authorization logic that allows users to
+    // manage their own tokens. authorize() is never called for it in index.ts.
+    const err = authorize(user, "manage_token");
+    // It falls through to the "no target account" guard, not the admin-only guard.
+    if (err) {
+      const text = (err.content[0] as { type: "text"; text: string }).text;
+      expect(text).not.toMatch(/requires admin/i);
+    }
   });
 
   it("user is allowed for own account", () => {

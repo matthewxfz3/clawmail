@@ -294,7 +294,7 @@ describe("Authentication", () => {
 // ---------------------------------------------------------------------------
 
 describe("tools/list", () => {
-  it("returns all 25 registered tools", async () => {
+  it("returns all 26 registered tools", async () => {
     const { rpc } = await mcpPost(
       { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
       TEST_KEY,
@@ -319,6 +319,7 @@ describe("tools/list", () => {
       "manage_rule",
       "manage_sender_list",
       "manage_template",
+      "manage_token",
       "manage_webhook",
       "read_email",
       "reply_to_email",
@@ -1422,14 +1423,20 @@ describe("Authorization", () => {
       expect(content?.content?.[0]?.text).toMatch(/admin/i);
     });
 
-    it("user key is denied create_account", async () => {
+    it("user key CAN call create_account (open to all authenticated callers)", async () => {
+      // create_account no longer requires admin — any authenticated caller can create an account.
+      // The call may fail due to the mock setup (Stalwart error), but it should NOT be a permission denial.
       const { rpc } = await mcpPost(
         { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_account", arguments: { local_part: "bob" } } },
         USER_KEY,
       );
       const content = (rpc as { result?: { content?: Array<{ text?: string }>; isError?: boolean } })?.result;
-      expect(content?.isError).toBe(true);
-      expect(content?.content?.[0]?.text).toMatch(/admin/i);
+      // Should not be a "requires admin privileges" denial
+      if (content?.isError) {
+        const text = content?.content?.[0]?.text ?? "";
+        expect(text).not.toMatch(/requires admin/i);
+        expect(text).not.toMatch(/permission denied/i);
+      }
     });
 
     it("user key is denied delete_account", async () => {

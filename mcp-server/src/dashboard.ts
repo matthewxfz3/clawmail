@@ -1,6 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { config } from "./config.js";
+import { listTokens, createToken, revokeToken } from "./tools/tokens.js";
 import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail, toolMarkAsRead, toolMarkAsUnread, toolFlagEmail } from "./tools/mailbox.js";
 import { toolMoveEmail, toolListFolders } from "./tools/folders.js";
@@ -69,6 +70,52 @@ function isAuthenticated(req: IncomingMessage): boolean {
     }
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Server-side flash store
+// Keeps sensitive values (e.g. token plaintexts) out of redirect URLs /
+// browser history / HTTP access logs. Entries are one-time-read and expire
+// after 5 minutes. Keyed by a random UUID set in the Location header.
+//
+// ⚠️  SINGLE-INSTANCE LIMITATION: this Map lives in process memory. When Cloud
+// Run scales to more than one instance, the POST that creates a flash and the
+// subsequent GET that reads it may be routed to different instances, causing
+// the flash to appear missing (the token banner won't show). To guarantee
+// correct behaviour, set `--min-instances=1` on the Cloud Run service so
+// requests from the same browser session always land on the same instance.
+// (The dashboard is a low-traffic operator tool so a single warm instance is
+// sufficient and inexpensive.)
+// ---------------------------------------------------------------------------
+
+interface FlashEntry {
+  msg: string;
+  type: "ok" | "err";
+  /** Plaintext token — present only for token-creation flash. Enables copy-to-clipboard UI. */
+  token?: string;
+  createdAt: number;
+}
+
+const flashStore = new Map<string, FlashEntry>();
+const FLASH_TTL_MS = 5 * 60 * 1000;
+
+function setFlash(msg: string, type: "ok" | "err" = "ok", extras?: { token?: string }): string {
+  const id = randomUUID();
+  flashStore.set(id, { msg, type, ...extras, createdAt: Date.now() });
+  // Prune stale entries (linear scan is fine; the store is tiny).
+  const now = Date.now();
+  for (const [k, v] of flashStore) {
+    if (now - v.createdAt > FLASH_TTL_MS) flashStore.delete(k);
+  }
+  return id;
+}
+
+function consumeFlash(id: string): Omit<FlashEntry, "createdAt"> | undefined {
+  const entry = flashStore.get(id);
+  if (!entry) return undefined;
+  flashStore.delete(id); // one-time read
+  if (Date.now() - entry.createdAt > FLASH_TTL_MS) return undefined;
+  return { msg: entry.msg, type: entry.type, token: entry.token };
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +276,7 @@ function tabBar(active: string): string {
     { id: "overview",      label: "Overview",           href: "/dashboard" },
     { id: "inboxes",       label: "Inboxes",             href: "/dashboard?tab=inboxes" },
     { id: "metrics",       label: "Metrics",             href: "/dashboard?tab=metrics" },
+    { id: "tokens",        label: "🔑 Tokens",           href: "/dashboard?tab=tokens" },
     { id: "calendars",     label: "Calendars & Rules",   href: "/dashboard?tab=calendars" },
     { id: "storage",       label: "Storage",             href: "/dashboard?tab=storage" },
     { id: "integrations",  label: "⚙ Integrations",     href: "/dashboard?tab=integrations" },
@@ -1501,6 +1549,179 @@ const SYSTEM_MAILBOX_PREFIXES: Record<string, string> = {
   blacklist: "BLACKLIST:",
 };
 
+// ---------------------------------------------------------------------------
+// Tokens tab
+// ---------------------------------------------------------------------------
+
+async function buildTokensTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
+  // Load all tokens from the store
+  let allTokens: Awaited<ReturnType<typeof listTokens>> = [];
+  let loadError = "";
+  try {
+    allTokens = await listTokens();
+  } catch (err) {
+    loadError = err instanceof Error ? err.message : String(err);
+  }
+
+  // Build per-account token rows
+  const accountEmails = new Set(accounts.map((a) => a.email.toLowerCase()));
+  const tokenRows = allTokens.map((t) => {
+    const isKnownAccount = accountEmails.has(t.account.toLowerCase());
+    const roleBadge = t.role === "admin"
+      ? `<span style="background:#7c3aed;color:#fff;padding:1px 7px;border-radius:10px;font-size:.73rem;font-weight:600">admin</span>`
+      : `<span style="background:#2563eb;color:#fff;padding:1px 7px;border-radius:10px;font-size:.73rem;font-weight:600">user</span>`;
+    return `
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="font-family:monospace;font-size:.8rem;padding:8px 8px 8px 0;color:#6b7280">${escHtml(t.tokenId.slice(0, 8))}…</td>
+        <td style="padding:8px">${escHtml(t.account)}${!isKnownAccount ? ' <span style="color:#f59e0b;font-size:.75rem">(unknown)</span>' : ""}</td>
+        <td style="padding:8px">${roleBadge}</td>
+        <td style="padding:8px;font-size:.82rem;color:#666">${escHtml(t.label ?? "—")}</td>
+        <td style="padding:8px;font-size:.78rem;color:#888;white-space:nowrap">${escHtml(new Date(t.createdAt).toLocaleDateString())}</td>
+        <td style="padding:8px;white-space:nowrap;text-align:right">
+          <form method="POST" action="/dashboard/tokens/generate" style="display:inline;margin-right:6px">
+            <input type="hidden" name="account" value="${escHtml(t.account)}">
+            <input type="hidden" name="label" value="regen">
+            <button type="submit" title="Generate a new token for this account"
+              style="padding:3px 9px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;font-size:.78rem;cursor:pointer;font-weight:600">
+              + New Token
+            </button>
+          </form>
+          <form method="POST" action="/dashboard/tokens/revoke" style="display:inline"
+                onsubmit="return confirm('Revoke this token? The agent will immediately lose access.')">
+            <input type="hidden" name="token_id" value="${escHtml(t.tokenId)}">
+            <button type="submit"
+              style="padding:3px 9px;background:#fff5f5;color:#dc2626;border:1px solid #fca5a5;border-radius:4px;font-size:.78rem;cursor:pointer;font-weight:600">
+              Revoke
+            </button>
+          </form>
+        </td>
+      </tr>`;
+  }).join("");
+
+  const tokensTable = allTokens.length > 0
+    ? `<table style="width:100%;border-collapse:collapse;font-size:.87rem">
+         <thead>
+           <tr style="border-bottom:2px solid #e5e7eb;color:#6b7280;font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.4px">
+             <th style="text-align:left;padding:6px 8px 6px 0">ID</th>
+             <th style="text-align:left;padding:6px 8px">Account</th>
+             <th style="text-align:left;padding:6px 8px">Role</th>
+             <th style="text-align:left;padding:6px 8px">Label</th>
+             <th style="text-align:left;padding:6px 8px">Created</th>
+             <th></th>
+           </tr>
+         </thead>
+         <tbody>${tokenRows}</tbody>
+       </table>`
+    : `<p style="color:#666;font-size:.9rem;margin:0">${loadError ? `Error loading tokens: ${escHtml(loadError)}` : "No tokens yet. Create accounts to auto-generate tokens, or use the form below."}</p>`;
+
+  // Build account options for the generate form
+  const accountOptions = accounts
+    .map((a) => `<option value="${escHtml(a.email)}">${escHtml(a.email)}</option>`)
+    .join("");
+
+  // ---------------------------------------------------------------------------
+  // Admin tokens section — show plaintext with mask/reveal + copy
+  // ---------------------------------------------------------------------------
+  const adminTokenList = [...config.auth.adminTokens];
+  const adminTokensHtml = config.auth.adminTokens.size > 0
+    ? `<div class="card" style="margin-top:16px;border-left:4px solid #7c3aed">
+         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+           <div>
+             <h3 style="margin:0 0 2px;font-size:1rem;font-weight:600">Static Admin Tokens</h3>
+             <p style="margin:0;font-size:.83rem;color:#6b7280">
+               From <code>MCP_ADMIN_TOKENS</code> — bypass all account scoping. Treat these as root credentials.
+             </p>
+           </div>
+         </div>
+         <div style="display:flex;flex-direction:column;gap:8px">
+           ${adminTokenList.map((tok, i) => {
+             const masked = tok.slice(0, 8) + "••••••••••••••••••••••••" + tok.slice(-6);
+             const safeId = `adm-${i}`;
+             return `
+               <div style="display:flex;align-items:center;gap:8px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;padding:8px 10px">
+                 <code id="${safeId}-display" data-plaintext="${escHtml(tok)}" data-masked="${escHtml(masked)}"
+                   style="flex:1;font-size:.82rem;word-break:break-all;color:#581c87">${escHtml(masked)}</code>
+                 <button onclick="toggleAdminToken('${safeId}')" id="${safeId}-eye"
+                   title="Reveal / hide"
+                   style="flex-shrink:0;padding:3px 9px;background:#fff;border:1px solid #d1d5db;border-radius:5px;font-size:.78rem;cursor:pointer">
+                   👁 Reveal
+                 </button>
+                 <button onclick="copyAdminToken('${safeId}')" id="${safeId}-copy"
+                   title="Copy to clipboard"
+                   style="flex-shrink:0;padding:3px 9px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-weight:600">
+                   Copy
+                 </button>
+               </div>`;
+           }).join("")}
+         </div>
+       </div>
+       <script>
+         function toggleAdminToken(id) {
+           const el = document.getElementById(id + '-display');
+           const btn = document.getElementById(id + '-eye');
+           if (el.textContent.includes('•')) {
+             el.textContent = el.dataset.plaintext;
+             btn.textContent = '🙈 Hide';
+           } else {
+             el.textContent = el.dataset.masked;
+             btn.textContent = '👁 Reveal';
+           }
+         }
+         function copyAdminToken(id) {
+           const tok = document.getElementById(id + '-display').dataset.plaintext;
+           navigator.clipboard.writeText(tok).then(() => {
+             const btn = document.getElementById(id + '-copy');
+             btn.textContent = 'Copied!';
+             setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+           });
+         }
+       </script>`
+    : `<div class="card" style="margin-top:16px;border-left:4px solid #e5e7eb">
+         <h3 style="margin:0 0 4px;font-size:1rem;font-weight:600;color:#6b7280">Static Admin Tokens</h3>
+         <p style="margin:0;font-size:.85rem;color:#9ca3af">
+           No <code>MCP_ADMIN_TOKENS</code> configured. Set this env var to add a permanent admin credential.
+         </p>
+       </div>`;
+
+  return `
+    <div style="max-width:920px;margin:24px 0">
+      <div class="card">
+        <h2 style="margin:0 0 4px;font-size:1.1rem;font-weight:600">Account Tokens</h2>
+        <p style="margin:0 0 16px;color:#6b7280;font-size:.88rem">
+          Per-account credentials returned by <code>create_account</code>.
+          Agents pass them as the <code>token</code> parameter.
+          Tokens are stored hashed — use <strong>+ New Token</strong> to issue a fresh one for any account.
+        </p>
+        ${tokensTable}
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 12px;font-size:1rem;font-weight:600">Generate New Token</h3>
+        <form method="POST" action="/dashboard/tokens/generate" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:200px">
+            <label style="display:block;font-size:.82rem;color:#374151;margin-bottom:4px">Account</label>
+            <select name="account" required style="width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem">
+              <option value="">— select account —</option>
+              ${accountOptions}
+            </select>
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label style="display:block;font-size:.82rem;color:#374151;margin-bottom:4px">Label (optional)</label>
+            <input type="text" name="label" placeholder="e.g. agent-v2"
+              style="width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;box-sizing:border-box">
+          </div>
+          <button type="submit"
+            style="padding:8px 18px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;white-space:nowrap">
+            Generate Token
+          </button>
+        </form>
+      </div>
+
+      ${adminTokensHtml}
+    </div>
+  `;
+}
+
 async function buildStorageTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
   const capped = accounts.slice(0, 20);
 
@@ -2034,19 +2255,53 @@ function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: st
 // Main dashboard page (tab routing)
 // ---------------------------------------------------------------------------
 
-async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "ok" | "err"; msg: string }): Promise<string> {
+async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<FlashEntry, "createdAt">): Promise<string> {
   const accountsResult = await toolListAccounts().catch(() => ({ accounts: [] as Array<{ email: string; name: string }>, count: 0 }));
   const accounts = accountsResult.accounts;
 
-  const flashBanner = flash
-    ? `<div style="margin:12px 0 0;padding:10px 16px;border-radius:6px;font-size:.85rem;font-weight:500;${flash.type === "ok" ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}">${flash.type === "ok" ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`
-    : "";
+  let flashBanner = "";
+  if (flash) {
+    const isOk = flash.type === "ok";
+    const baseStyle = `margin:12px 0 0;padding:12px 16px;border-radius:8px;font-size:.88rem;font-weight:500;${isOk ? "background:#dcfce7;color:#166534;border:1px solid #86efac" : "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"}`;
+    if (flash.token) {
+      // Rich token banner: show the plaintext in a monospace copyable field.
+      flashBanner = `
+        <div style="${baseStyle}">
+          <div style="margin-bottom:8px">${isOk ? "✓" : "✗"} ${escHtml(flash.msg)}</div>
+          <div style="display:flex;gap:8px;align-items:center;background:rgba(0,0,0,.06);border-radius:6px;padding:8px 10px">
+            <code id="flash-token" style="flex:1;font-size:.82rem;word-break:break-all;user-select:all">${escHtml(flash.token)}</code>
+            <button onclick="copyFlashToken()" id="flash-copy-btn"
+              style="flex-shrink:0;padding:4px 10px;background:#166534;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-weight:600">
+              Copy
+            </button>
+          </div>
+          <div style="margin-top:6px;font-size:.78rem;opacity:.8">Save this token — it will not be shown again.</div>
+        </div>
+        <script>
+          function copyFlashToken() {
+            const t = document.getElementById('flash-token').textContent;
+            navigator.clipboard.writeText(t).then(() => {
+              const btn = document.getElementById('flash-copy-btn');
+              btn.textContent = 'Copied!';
+              btn.style.background = '#14532d';
+              setTimeout(() => { btn.textContent = 'Copy'; btn.style.background = '#166534'; }, 2000);
+            }).catch(() => {
+              document.getElementById('flash-token').select && document.getElementById('flash-token').select();
+            });
+          }
+        </script>`;
+    } else {
+      flashBanner = `<div style="${baseStyle};white-space:pre-wrap;word-break:break-all">${isOk ? "✓" : "✗"} ${escHtml(flash.msg)}</div>`;
+    }
+  }
 
   let content: string;
   if (tab === "inboxes") {
     content = (flashBanner ? `<div>${flashBanner}</div>` : "") + await buildInboxesTab(accounts);
   } else if (tab === "metrics") {
     content = await buildMetricsTab(accounts);
+  } else if (tab === "tokens") {
+    content = (flashBanner ? `<div>${flashBanner}</div>` : "") + await buildTokensTab(accounts);
   } else if (tab === "calendars") {
     content = await buildCalendarsTab(accounts);
   } else if (tab === "storage") {
@@ -2057,6 +2312,7 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: { type: "
 
   const activeTab = tab === "inboxes" ? "inboxes"
     : tab === "metrics" ? "metrics"
+    : tab === "tokens" ? "tokens"
     : tab === "calendars" ? "calendars"
     : tab === "storage" ? "storage"
     : tab === "integrations" ? "integrations"
@@ -2448,6 +2704,57 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // ── Token routes ───────────────────────────────────────────────────────────
+
+  // POST /dashboard/tokens/generate — create a new token for an account
+  if (path === "/dashboard/tokens/generate" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const account = (form["account"] ?? "").trim();
+    const label   = (form["label"] ?? "").trim() || undefined;
+    if (!account) {
+      res.writeHead(302, { "Location": "/dashboard?tab=tokens&err=" + encodeURIComponent("Account is required") });
+      res.end();
+      return;
+    }
+    try {
+      const { plaintext } = await createToken(account, "user", label);
+      // Store the plaintext in the server-side flash store (not in the URL) so it
+      // never appears in browser history, HTTP access logs, or Referer headers.
+      const msg = `Token created for ${account}${label ? ` (${label})` : ""}`;
+      const flashId = setFlash(msg, "ok", { token: plaintext });
+      res.writeHead(302, { "Location": "/dashboard?tab=tokens&flash=" + flashId });
+    } catch (e) {
+      res.writeHead(302, { "Location": "/dashboard?tab=tokens&err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)) });
+    }
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/tokens/revoke — revoke a token by ID
+  if (path === "/dashboard/tokens/revoke" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const tokenId = (form["token_id"] ?? "").trim();
+    if (!tokenId) {
+      res.writeHead(302, { "Location": "/dashboard?tab=tokens&err=" + encodeURIComponent("token_id is required") });
+      res.end();
+      return;
+    }
+    try {
+      const ok = await revokeToken(tokenId);
+      if (ok) {
+        res.writeHead(302, { "Location": "/dashboard?tab=tokens&ok=" + encodeURIComponent(`Token ${tokenId.slice(0, 8)}… revoked`) });
+      } else {
+        res.writeHead(302, { "Location": "/dashboard?tab=tokens&err=" + encodeURIComponent(`Token not found: ${tokenId}`) });
+      }
+    } catch (e) {
+      res.writeHead(302, { "Location": "/dashboard?tab=tokens&err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)) });
+    }
+    res.end();
+    return;
+  }
+
   // ── Integrations routes ────────────────────────────────────────────────────
 
   const proto2 = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
@@ -2545,9 +2852,17 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
   const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers["host"] ?? `localhost:${config.port}`;
   const serviceUrl = `${proto}://${host}`;
 
-  let flash: { type: "ok" | "err"; msg: string } | undefined;
-  if (url.searchParams.get("sent") === "1") flash = { type: "ok", msg: "Test email sent successfully." };
-  else if (url.searchParams.get("err")) flash = { type: "err", msg: url.searchParams.get("err")! };
+  let flash: Omit<FlashEntry, "createdAt"> | undefined;
+  const flashId = url.searchParams.get("flash");
+  if (flashId) {
+    flash = consumeFlash(flashId);
+  } else if (url.searchParams.get("sent") === "1") {
+    flash = { type: "ok", msg: "Test email sent successfully." };
+  } else if (url.searchParams.get("ok")) {
+    flash = { type: "ok", msg: url.searchParams.get("ok")! };
+  } else if (url.searchParams.get("err")) {
+    flash = { type: "err", msg: url.searchParams.get("err")! };
+  }
 
   if (tab === "integrations") {
     const flashMsg = url.searchParams.get("err")
