@@ -51,3 +51,4 @@ _All items completed._
 - [x] Security fix: admin token `data-plaintext` removed from DOM; Reveal now calls server-side `/dashboard/tokens/reveal?i=N` endpoint (session-gated, token never in HTML)
 - [x] Bug fix: duplicate old calendar CSS block removed (was overriding new CSS variables with hardcoded hex colors on calendar/week view tabs)
 - [x] Fix: `manage_token` rate limit now uses resolved `callerAccount` (not service `apiKey`) — consistent with all other account-scoped tools
+- [x] Fix: token table action buttons (+ Token / Revoke) wrapped in a flex row — no more wrapping or misalignment in narrow columns; `td` vertical-align changed to `middle`
