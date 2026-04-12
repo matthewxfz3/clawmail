@@ -44,3 +44,10 @@ _All items completed._
 - [x] Case-insensitive account comparison in `manage_token` (email addresses are case-insensitive)
 - [x] `accounts.test.ts` (12 tests) — account lifecycle, deletion guard, token cleanup, JMAP failure paths
 - [x] `tokens.test.ts` — token CRUD unit tests with mocked JMAP/Stalwart backends
+- [x] Dashboard UI/UX overhaul — CSS design system with CSS custom properties, Plus Jakarta Sans + JetBrains Mono fonts, new color palette
+- [x] Dashboard login page redesign — split two-panel layout with brand mark, dark glassmorphism form, credential hint, ambient tool-name art
+- [x] Dashboard topbar redesign — logo mark, domain pill, cleaner sign-out; tab bar with icon glyphs and CSS-var active state
+- [x] Dashboard tokens tab polish — CSS-class-based buttons/pills, generate form styled with design system
+- [x] Security fix: admin token `data-plaintext` removed from DOM; Reveal now calls server-side `/dashboard/tokens/reveal?i=N` endpoint (session-gated, token never in HTML)
+- [x] Bug fix: duplicate old calendar CSS block removed (was overriding new CSS variables with hardcoded hex colors on calendar/week view tabs)
+- [x] Fix: `manage_token` rate limit now uses resolved `callerAccount` (not service `apiKey`) — consistent with all other account-scoped tools
