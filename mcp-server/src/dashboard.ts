@@ -1619,8 +1619,10 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
 // ---------------------------------------------------------------------------
 
 const SYSTEM_MAILBOX_PREFIXES: Record<string, string> = {
+  calendar:  "CAL:",
   contacts:  "CONTACT:",
   templates: "TEMPLATE:",
+  tokens:    "TOKEN:",
   webhooks:  "WEBHOOK:",
   scheduled: "SCHEDULED:",
   rules:     "RULE:",
@@ -1818,7 +1820,7 @@ async function buildStorageTab(accounts: Array<{ email: string; name: string }>)
         counts[key] = items.filter(i => i.subject.startsWith(prefix)).length;
       })
     );
-    const cells = ["contacts","templates","webhooks","scheduled","rules","whitelist","blacklist"]
+    const cells = ["calendar","contacts","templates","tokens","webhooks","scheduled","rules","whitelist","blacklist"]
       .map(k => `<td class="num">${counts[k] ?? "—"}</td>`).join("");
     summaryRows.push(`<tr><td style="font-size:.85rem">${escHtml(acct.email)}</td>${cells}</tr>`);
   }
@@ -1829,8 +1831,8 @@ async function buildStorageTab(accounts: Array<{ email: string; name: string }>)
     <div class="card">
       <h2>System mailbox summary${capped.length < accounts.length ? ` (top ${capped.length})` : ""}</h2>
       <table>
-        <thead><tr><th>Account</th><th style="text-align:right">Contacts</th><th style="text-align:right">Templates</th><th style="text-align:right">Webhooks</th><th style="text-align:right">Scheduled</th><th style="text-align:right">Rules</th><th style="text-align:right">Whitelist</th><th style="text-align:right">Blacklist</th></tr></thead>
-        <tbody>${summaryRows.join("") || `<tr><td colspan="8" class="empty">No accounts</td></tr>`}</tbody>
+        <thead><tr><th>Account</th><th style="text-align:right">Calendar</th><th style="text-align:right">Contacts</th><th style="text-align:right">Templates</th><th style="text-align:right">Tokens</th><th style="text-align:right">Webhooks</th><th style="text-align:right">Scheduled</th><th style="text-align:right">Rules</th><th style="text-align:right">Whitelist</th><th style="text-align:right">Blacklist</th></tr></thead>
+        <tbody>${summaryRows.join("") || `<tr><td colspan="10" class="empty">No accounts</td></tr>`}</tbody>
       </table>
     </div>
 
