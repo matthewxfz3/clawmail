@@ -310,7 +310,8 @@ const CSS = `
 `;
 
 function page(title: string, body: string): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Clawmail</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>${body}</body></html>`;
+  const favicon = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3Cstyle%3E.claw-bg%7Bfill:%231a2332%7D.claw-main%7Bfill:%23ffffff%7D.claw-accent%7Bfill:%2314b8a6%7D%3C/style%3E%3C/defs%3E%3Crect class='claw-bg' width='64' height='64'/%3E%3Cpath class='claw-main' d='M32 8 L42 16 L44 28 L32 32 L28 28 Z'/%3E%3Cpath class='claw-main' d='M20 14 L28 18 L30 32 L20 30 Z'/%3E%3Cpath class='claw-main' d='M44 18 L52 22 L50 34 L44 32 Z'/%3E%3Cpath class='claw-accent' d='M24 36 L40 36 L38 48 L26 48 Z'/%3E%3Cpath class='claw-main' d='M26 50 L38 50 L36 58 L28 58 Z'/%3E%3C/svg%3E`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Clawmail</title><link rel="icon" type="image/svg+xml" href="${favicon}"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>${body}</body></html>`;
 }
 
 function topbar(): string {
