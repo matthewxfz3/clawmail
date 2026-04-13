@@ -692,6 +692,18 @@ export async function toolSendEventInvite(
     ],
   });
 
+  // Save a copy to the sender's Sent folder via JMAP.
+  // Fire-and-forget: don't fail the invite if this errors.
+  new JmapClient(fromEmail).saveToSent({
+    from: fromEmail,
+    to: toList,
+    subject: `Invitation: ${title}`,
+    body: textBody,
+    sentAt: queuedAt,
+  }).catch((err) => {
+    console.warn(`[send_event_invite] saveToSent failed for ${fromEmail}:`, err instanceof Error ? err.message : String(err));
+  });
+
   // Automatically create the event in the sender's calendar (like Gmail/Outlook behavior)
   try {
     await toolCreateEvent({
