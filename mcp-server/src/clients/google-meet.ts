@@ -21,6 +21,11 @@ export async function isMeetConfigured(): Promise<boolean> {
 /** Exchange a refresh token for a fresh access token. */
 async function getAccessToken(): Promise<string> {
   const { clientId, clientSecret, refreshToken } = await resolveCreds();
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(`Google Meet credentials incomplete: clientId=${!!clientId}, clientSecret=${!!clientSecret}, refreshToken=${!!refreshToken}`);
+  }
+
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -33,9 +38,12 @@ async function getAccessToken(): Promise<string> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Failed to refresh Google access token: ${text}`);
+    throw new Error(`Failed to refresh Google access token (${res.status}): ${text}`);
   }
-  const data = (await res.json()) as { access_token: string };
+  const data = (await res.json()) as { access_token?: string };
+  if (!data.access_token) {
+    throw new Error(`Google token response missing access_token: ${JSON.stringify(data)}`);
+  }
   return data.access_token;
 }
 
@@ -55,9 +63,14 @@ export async function createMeetSpace(): Promise<string> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    console.error(`Google Meet API error ${res.status}: ${text}`);
     throw new Error(`Google Meet API error ${res.status}: ${text}`);
   }
-  const data = (await res.json()) as { meetingUri: string };
+  const data = (await res.json()) as { meetingUri?: string };
+  if (!data.meetingUri) {
+    console.error(`Google Meet response missing meetingUri: ${JSON.stringify(data)}`);
+    throw new Error(`Google Meet response missing meetingUri`);
+  }
   return data.meetingUri;
 }
 

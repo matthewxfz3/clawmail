@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createDailyRoom, isDailyConfigured } from "../clients/daily.js";
 import { createMeetSpace, isMeetConfigured } from "../clients/google-meet.js";
 import { validateTimezone, toICalDateUtc, toICalDateLocal, buildVTimezone } from "../lib/timezone.js";
+import { toolCreateEvent } from "./calendar.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -623,12 +624,20 @@ export async function toolSendEventInvite(
 
   // Resolve video URL — priority: explicit > Google Meet > Daily.co > none
   let resolvedLocation = params.video_url ?? params.location;
+  let videoGenerationError: string | null = null;
   if (!resolvedLocation) {
-    if (await isMeetConfigured()) {
-      resolvedLocation = await createMeetSpace();
-    } else if (await isDailyConfigured()) {
-      const roomName = `clawmail-${uid.split("@")[0].slice(0, 24)}`;
-      resolvedLocation = await createDailyRoom({ name: roomName, expiresAt: end });
+    try {
+      if (await isMeetConfigured()) {
+        resolvedLocation = await createMeetSpace();
+      } else if (await isDailyConfigured()) {
+        const roomName = `clawmail-${uid.split("@")[0].slice(0, 24)}`;
+        resolvedLocation = await createDailyRoom({ name: roomName, expiresAt: end });
+      }
+    } catch (e) {
+      // Log error but don't fail the invite — just send without video URL
+      const errorMsg = String(e);
+      console.error(`Failed to create video room: ${errorMsg}`);
+      videoGenerationError = errorMsg;
     }
   }
 
@@ -683,12 +692,34 @@ export async function toolSendEventInvite(
     ],
   });
 
-  return {
+  // Automatically create the event in the sender's calendar (like Gmail/Outlook behavior)
+  try {
+    await toolCreateEvent({
+      account: fromAccount,
+      title,
+      start,
+      end,
+      description,
+      attendees: toList,
+      timezone,
+    });
+  } catch (e) {
+    // Log but don't fail the invite if calendar creation fails
+    console.error(`Failed to create calendar event for sender: ${String(e)}`);
+  }
+
+  const result: { message: string; queued_at: string; uid: string; video_url: string | null; video_generation_warning?: string } = {
     message: `Calendar invite "${title}" sent from ${fromEmail} to ${toList.join(", ")}`,
     queued_at: queuedAt,
     uid,
     video_url: resolvedLocation ?? null,
   };
+
+  if (videoGenerationError) {
+    result.video_generation_warning = `Video room generation failed: ${videoGenerationError}`;
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

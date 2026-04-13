@@ -1171,13 +1171,14 @@ async function buildCalendarsTab(accounts: Array<{ email: string; name: string }
 // Sub-page: Account calendar
 // ---------------------------------------------------------------------------
 
-async function buildAccountCalendarPage(account: string, month?: string, view?: string, week?: string): Promise<string> {
+async function buildAccountCalendarPage(account: string, month?: string, view?: string, week?: string, userTimezone?: string): Promise<string> {
   const now = new Date();
   const isWeek  = view === "week";
   const monthStr = month && /^\d{4}-\d{2}$/.test(month)
     ? month
     : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const weekStr  = week ?? now.toISOString().slice(0, 10);
+  const tz = userTimezone ?? "UTC";
 
   const client = new JmapClient(account);
   const [eventsResult, mailboxesResult] = await Promise.allSettled([
@@ -1195,11 +1196,23 @@ async function buildAccountCalendarPage(account: string, month?: string, view?: 
     <a href="${base}&view=week&week=${weekStr}"${isWeek ? ` class="active"` : ""}>Week</a>
   </div>`;
 
+  // Timezone selector
+  const tzOptions = COMMON_TIMEZONES.map(tzOpt =>
+    `<option value="${escHtml(tzOpt)}"${tzOpt === tz ? " selected" : ""}>${escHtml(tzOpt)}</option>`
+  ).join("");
+  const tzSelectorHtml = `<form method="POST" action="/dashboard/action/set-timezone" style="display:inline-block;margin-bottom:12px">
+    <label style="font-size:.85rem;color:#666;margin-right:6px">Timezone:</label>
+    <select name="timezone" onchange="this.form.submit()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font-size:.85rem;cursor:pointer">
+      ${tzOptions}
+    </select>
+    <input type="hidden" name="return_url" value="${escHtml(`/dashboard/inbox?a=${encodeURIComponent(account)}&folder=_calendar${isWeek ? `&view=week&week=${weekStr}` : `&month=${monthStr}`}`)}">
+  </form>`;
+
   const gridOrError = fetchError
     ? `<div style="padding:24px;color:#dc2626">Failed to load events: ${escHtml(fetchError)}</div>`
     : isWeek
-      ? buildWeekView(events, weekStr, account)
-      : buildCalendarGrid(events, monthStr, account);
+      ? buildWeekView(events, weekStr, account, tz)
+      : buildCalendarGrid(events, monthStr, account, tz);
 
   return page(`Calendar — ${account}`, `
     ${topbar()}
@@ -1208,10 +1221,11 @@ async function buildAccountCalendarPage(account: string, month?: string, view?: 
       <div>
         <a class="back-link" href="/dashboard?tab=inboxes">← All accounts</a>
         <div class="page-title">${escHtml(account)}</div>
-        <div class="page-sub">Calendar — ${events.length} event${events.length !== 1 ? "s" : ""}</div>
+        <div class="page-sub">Calendar — ${events.length} event${events.length !== 1 ? "s" : ""} (viewing in ${escHtml(tz)})</div>
       </div>
       <div class="card" style="padding:20px">
         ${buildFolderTabBar(account, mailboxes, "_calendar")}
+        ${tzSelectorHtml}
         ${toggleHtml}
         ${gridOrError}
       </div>
@@ -1284,9 +1298,9 @@ async function buildAccountRulesPage(account: string): Promise<string> {
 // Sub-page: Account inbox
 // ---------------------------------------------------------------------------
 
-async function buildInboxPage(account: string, folder = "Inbox", month?: string, view?: string, week?: string): Promise<string> {
+async function buildInboxPage(account: string, folder = "Inbox", month?: string, view?: string, week?: string, userTimezone?: string): Promise<string> {
   // Pseudo-folder interception for calendar and rules views
-  if (folder === "_calendar") return buildAccountCalendarPage(account, month, view, week);
+  if (folder === "_calendar") return buildAccountCalendarPage(account, month, view, week, userTimezone);
   if (folder === "_rules")    return buildAccountRulesPage(account);
 
   const client = new JmapClient(account);
@@ -1362,7 +1376,8 @@ async function buildEmailPage(account: string, emailId: string, folder = "Inbox"
     toolListFolders({ account }).catch(() => ({ folders: [], count: 0 })),
   ]);
   const date = new Date(email.receivedAt).toLocaleString();
-  const body = email.textBody ?? email.htmlBody ?? "(no body)";
+  // Fall back to preview if textBody/htmlBody are empty (e.g., calendar invites)
+  const body = email.textBody ?? email.htmlBody ?? email.preview ?? "(no body)";
   const isHtml = !email.textBody && !!email.htmlBody;
   const folderOptions = foldersResult.folders
     .map(f => `<option value="${escHtml(f.name)}"${f.name === folder ? " selected" : ""}>${escHtml(f.name)}</option>`)
@@ -2091,12 +2106,57 @@ async function buildFoldersPage(account: string, flash?: { ok?: string; err?: st
 // Calendar helpers
 // ---------------------------------------------------------------------------
 
+/** Common IANA timezone names for dashboard selector */
+const COMMON_TIMEZONES = [
+  "UTC",
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "Europe/London",
+  "Europe/Paris",
+  "Asia/Tokyo",
+  "Asia/Hong_Kong",
+  "Asia/Singapore",
+  "Australia/Sydney",
+];
+
+/** Extract user's timezone preference from cookie, default to UTC */
+function getUserTimezonePreference(req: IncomingMessage): string {
+  const cookieHeader = req.headers["cookie"] ?? "";
+  for (const part of cookieHeader.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name.trim() === "dashboardTimezone") {
+      const value = rest.join("=").trim();
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return "UTC";
+      }
+    }
+  }
+  return "UTC";
+}
+
 /** Get the timezone for an event, defaulting to UTC */
 function eventTz(ev: CalendarEvent): string {
   return ev.timezone || "UTC";
 }
 
-function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: string): string {
+/** Convert event time to user's timezone. Returns time string and user's timezone. */
+function convertEventTimeToUser(eventDate: Date, eventTz: string, userTz: string): { time: string; tz: string } {
+  // If user's timezone is same as event timezone, no conversion needed
+  if (userTz === eventTz) {
+    const time = eventDate.toLocaleTimeString([], { timeZone: eventTz, hour: "2-digit", minute: "2-digit" });
+    return { time, tz: userTz };
+  }
+
+  // Convert: first get UTC time, then format in user's timezone
+  const time = eventDate.toLocaleTimeString([], { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
+  return { time, tz: userTz };
+}
+
+function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: string, userTimezone: string = "UTC"): string {
   const match = /^(\d{4})-(\d{2})$/.exec(monthStr);
   const now = new Date();
   const year  = match ? parseInt(match[1], 10) : now.getFullYear();
@@ -2152,16 +2212,18 @@ function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: s
     const badges = dayEvents.map(ev => {
       const isPast = new Date(ev.end) < now;
       const titleShort = ev.title.length > 28 ? ev.title.slice(0, 26) + "…" : ev.title;
-      const tz = eventTz(ev);
-      const timeStr = new Date(ev.start).toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit" });
+      const eventTzValue = eventTz(ev);
+      const { time: displayTime, tz: displayTz } = convertEventTimeToUser(new Date(ev.start), eventTzValue, userTimezone);
       const descHtml = ev.description ? `<div style="margin-top:3px;color:#666">${escHtml(ev.description.slice(0, 100))}</div>` : "";
       const attHtml  = ev.attendees?.length ? `<div style="margin-top:3px;color:#888;font-size:.75rem">Attendees: ${escHtml(ev.attendees.slice(0, 5).join(", "))}</div>` : "";
-      const tzLabel = tz !== "UTC" ? ` ${tz}` : "";
+      const tzLabel = displayTz !== "UTC" ? ` ${displayTz}` : "";
+      const detailStart = new Date(ev.start).toLocaleString([], { timeZone: userTimezone });
+      const detailEnd = new Date(ev.end).toLocaleTimeString([], { timeZone: userTimezone, hour: "2-digit", minute: "2-digit" });
       return `<details class="cal-event${isPast ? " cal-past" : ""}">
-        <summary>${escHtml(timeStr)}${escHtml(tzLabel)} ${escHtml(titleShort)}</summary>
+        <summary>${escHtml(displayTime)}${escHtml(tzLabel)} ${escHtml(titleShort)}</summary>
         <div class="cal-detail">
           <div><strong>${escHtml(ev.title)}</strong></div>
-          <div style="color:#888;font-size:.78rem">${escHtml(new Date(ev.start).toLocaleString([], { timeZone: tz }))} – ${escHtml(new Date(ev.end).toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit" }))}</div>
+          <div style="color:#888;font-size:.78rem">${escHtml(detailStart)} – ${escHtml(detailEnd)}</div>
           ${descHtml}${attHtml}
         </div>
       </details>`;
@@ -2202,7 +2264,7 @@ function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: s
 // Calendar week view helper
 // ---------------------------------------------------------------------------
 
-function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: string): string {
+function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: string, userTimezone: string = "UTC"): string {
   const HOUR_PX = 48;
   const now = new Date();
 
@@ -2538,6 +2600,28 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // POST /dashboard/action/set-timezone
+  if (path === "/dashboard/action/set-timezone" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const tz = form["timezone"] ?? "UTC";
+    const returnUrl = form["return_url"] ?? "/dashboard";
+    // Validate timezone by attempting to use it
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: tz });
+      const encodedTz = encodeURIComponent(tz);
+      res.writeHead(302, {
+        "Set-Cookie": `dashboardTimezone=${encodedTz}; Path=/dashboard; SameSite=Lax; Max-Age=31536000`,
+        "Location": returnUrl,
+      });
+    } catch {
+      // Invalid timezone, redirect without setting cookie
+      res.writeHead(302, { "Location": returnUrl });
+    }
+    res.end();
+    return;
+  }
+
   // POST /dashboard/action/send-test-email
   if (path === "/dashboard/action/send-test-email" && req.method === "POST") {
     const body = await readBody(req);
@@ -2638,7 +2722,8 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
       return;
     }
     try {
-      const html = await buildInboxPage(account, folder, month, view, week);
+      const userTimezone = getUserTimezonePreference(req);
+      const html = await buildInboxPage(account, folder, month, view, week, userTimezone);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
     } catch (e) {
