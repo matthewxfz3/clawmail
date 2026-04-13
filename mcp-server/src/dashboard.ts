@@ -1068,16 +1068,16 @@ function buildFolderTabBar(
       style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${isActive ? "600" : "500"};text-decoration:none;${isActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">${escHtml(mb.name)}${badge}</a>`;
   }).join("");
 
-  const calActive = activeFolder === "__calendar";
-  const rulesActive = activeFolder === "__rules";
+  const calActive = activeFolder === "_calendar";
+  const rulesActive = activeFolder === "_rules";
 
   return `
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:18px">
       ${folderLinks}
       <span style="display:inline-block;width:1px;background:#e5e7eb;height:20px;margin:0 2px;align-self:center"></span>
-      <a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar"
+      <a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=_calendar"
         style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${calActive ? "600" : "500"};text-decoration:none;${calActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">📅 Calendar</a>
-      <a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__rules"
+      <a href="/dashboard/inbox?a=${encodeURIComponent(account)}&folder=_rules"
         style="display:inline-block;padding:5px 12px;border-radius:20px;font-size:.82rem;font-weight:${rulesActive ? "600" : "500"};text-decoration:none;${rulesActive ? "background:#4f46e5;color:#fff" : "background:#f1f3f5;color:#555"}">⚙️ Rules</a>
     </div>`;
 }
@@ -1136,8 +1136,8 @@ async function buildCalendarsTab(accounts: Array<{ email: string; name: string }
       <td>${nextStr}</td>
       <td>${ruleBadge}</td>
       <td style="text-align:right;white-space:nowrap">
-        <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__calendar" style="font-size:.78rem;padding:4px 10px;margin-right:4px">📅 Calendar</a>
-        <a class="btn" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=__rules" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569;margin-right:4px">⚙️ Rules</a>
+        <a class="btn btn-primary" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=_calendar" style="font-size:.78rem;padding:4px 10px;margin-right:4px">📅 Calendar</a>
+        <a class="btn" href="/dashboard/inbox?a=${encodeURIComponent(a.email)}&folder=_rules" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569;margin-right:4px">⚙️ Rules</a>
         <a class="btn" href="/dashboard/folders?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569;margin-right:4px">📁 Folders</a>
         <a class="btn" href="/dashboard/account-settings?a=${encodeURIComponent(a.email)}" style="font-size:.78rem;padding:4px 10px;background:#f1f5f9;color:#475569">⚙ Settings</a>
       </td>
@@ -1189,7 +1189,7 @@ async function buildAccountCalendarPage(account: string, month?: string, view?: 
   const fetchError = eventsResult.status === "rejected" ? String(eventsResult.reason) : null;
   const mailboxes = mailboxesResult.status === "fulfilled" ? mailboxesResult.value : [];
 
-  const base = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar`;
+  const base = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=_calendar`;
   const toggleHtml = `<div class="view-toggle">
     <a href="${base}&month=${monthStr}"${!isWeek ? ` class="active"` : ""}>Month</a>
     <a href="${base}&view=week&week=${weekStr}"${isWeek ? ` class="active"` : ""}>Week</a>
@@ -1211,7 +1211,7 @@ async function buildAccountCalendarPage(account: string, month?: string, view?: 
         <div class="page-sub">Calendar — ${events.length} event${events.length !== 1 ? "s" : ""}</div>
       </div>
       <div class="card" style="padding:20px">
-        ${buildFolderTabBar(account, mailboxes, "__calendar")}
+        ${buildFolderTabBar(account, mailboxes, "_calendar")}
         ${toggleHtml}
         ${gridOrError}
       </div>
@@ -1262,7 +1262,7 @@ async function buildAccountRulesPage(account: string): Promise<string> {
         <div class="page-sub">Rules — ${rules.length} active</div>
       </div>
       <div class="card" style="padding:20px 20px 0">
-        ${buildFolderTabBar(account, mailboxes, "__rules")}
+        ${buildFolderTabBar(account, mailboxes, "_rules")}
         <div style="margin:0 -20px">
           <table>
             <thead><tr>
@@ -1286,8 +1286,8 @@ async function buildAccountRulesPage(account: string): Promise<string> {
 
 async function buildInboxPage(account: string, folder = "Inbox", month?: string, view?: string, week?: string): Promise<string> {
   // Pseudo-folder interception for calendar and rules views
-  if (folder === "__calendar") return buildAccountCalendarPage(account, month, view, week);
-  if (folder === "__rules")    return buildAccountRulesPage(account);
+  if (folder === "_calendar") return buildAccountCalendarPage(account, month, view, week);
+  if (folder === "_rules")    return buildAccountRulesPage(account);
 
   const client = new JmapClient(account);
 
@@ -2160,7 +2160,7 @@ function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: s
   const prevStr   = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
   const nextStr   = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}`;
   const monthLabel = firstDay.toLocaleString("default", { month: "long", year: "numeric" });
-  const base = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar`;
+  const base = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=_calendar`;
 
   return `
     <div class="cal-nav">
@@ -2305,7 +2305,7 @@ function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: st
   const nextMonday = new Date(monday); nextMonday.setDate(monday.getDate() + 7);
   const prevStr    = prevMonday.toISOString().slice(0, 10);
   const nextStr    = nextMonday.toISOString().slice(0, 10);
-  const base       = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=__calendar`;
+  const base       = `/dashboard/inbox?a=${encodeURIComponent(account)}&folder=_calendar`;
   const weekLabel  = `${monday.toLocaleDateString("default", { month: "short", day: "numeric" })} – ${days[6].toLocaleDateString("default", { month: "short", day: "numeric", year: "numeric" })}`;
 
   const scrollId  = `ws${monday.getTime()}`;
