@@ -2088,8 +2088,13 @@ async function buildFoldersPage(account: string, flash?: { ok?: string; err?: st
 }
 
 // ---------------------------------------------------------------------------
-// Calendar grid view helper
+// Calendar helpers
 // ---------------------------------------------------------------------------
+
+/** Get the timezone for an event, defaulting to UTC */
+function eventTz(ev: CalendarEvent): string {
+  return ev.timezone || "UTC";
+}
 
 function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(monthStr);
@@ -2101,17 +2106,28 @@ function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: s
   const lastDay  = new Date(year, month, 0);
 
   // Build date → events map (events can span multiple days, cap at 14 days)
+  // Use event timezone for day bucketing, not UTC
   const byDay = new Map<string, CalendarEvent[]>();
   for (const ev of events) {
     const startD = new Date(ev.start);
     const endD   = new Date(ev.end);
-    const cursor = new Date(startD);
-    cursor.setHours(0, 0, 0, 0);
-    const endDay = new Date(endD);
-    endDay.setHours(0, 0, 0, 0);
+    const tz = eventTz(ev);
+
+    // Convert to local date strings in event's timezone
+    const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+    const startLocalStr = formatter.format(startD);
+    const endLocalStr = formatter.format(endD);
+
+    // Parse YYYY-MM-DD strings
+    const startParts = startLocalStr.split("-").map(x => parseInt(x, 10));
+    const endParts = endLocalStr.split("-").map(x => parseInt(x, 10));
+
+    const cursor = new Date(startParts[0], startParts[1] - 1, startParts[2]);
+    const endDay = new Date(endParts[0], endParts[1] - 1, endParts[2]);
+
     let span = 0;
     while (cursor <= endDay && span++ < 15) {
-      const key = cursor.toISOString().slice(0, 10);
+      const key = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(cursor);
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key)!.push(ev);
       cursor.setDate(cursor.getDate() + 1);
@@ -2136,14 +2152,16 @@ function buildCalendarGrid(events: CalendarEvent[], monthStr: string, account: s
     const badges = dayEvents.map(ev => {
       const isPast = new Date(ev.end) < now;
       const titleShort = ev.title.length > 28 ? ev.title.slice(0, 26) + "…" : ev.title;
-      const timeStr = new Date(ev.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const tz = eventTz(ev);
+      const timeStr = new Date(ev.start).toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit" });
       const descHtml = ev.description ? `<div style="margin-top:3px;color:#666">${escHtml(ev.description.slice(0, 100))}</div>` : "";
       const attHtml  = ev.attendees?.length ? `<div style="margin-top:3px;color:#888;font-size:.75rem">Attendees: ${escHtml(ev.attendees.slice(0, 5).join(", "))}</div>` : "";
+      const tzLabel = tz !== "UTC" ? ` ${tz}` : "";
       return `<details class="cal-event${isPast ? " cal-past" : ""}">
-        <summary>${escHtml(timeStr)} ${escHtml(titleShort)}</summary>
+        <summary>${escHtml(timeStr)}${escHtml(tzLabel)} ${escHtml(titleShort)}</summary>
         <div class="cal-detail">
           <div><strong>${escHtml(ev.title)}</strong></div>
-          <div style="color:#888;font-size:.78rem">${escHtml(new Date(ev.start).toLocaleString())} – ${escHtml(new Date(ev.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</div>
+          <div style="color:#888;font-size:.78rem">${escHtml(new Date(ev.start).toLocaleString([], { timeZone: tz }))} – ${escHtml(new Date(ev.end).toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit" }))}</div>
           ${descHtml}${attHtml}
         </div>
       </details>`;
@@ -2253,13 +2271,32 @@ function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: st
     const dayStart = new Date(d); dayStart.setHours(0, 0, 0, 0);
     const dayEnd   = new Date(d); dayEnd.setHours(23, 59, 59, 999);
 
+    // Helper: convert a Date to minutes in a specific timezone's day
+    function toLocalMinutes(date: Date, tz: string, dayStart: Date, dayEnd: Date): number {
+      // Clamp to day boundaries first
+      let d = date;
+      if (d < dayStart) d = dayStart;
+      if (d > dayEnd) d = dayEnd;
+
+      // Get local time parts in the specified timezone
+      const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+      });
+      const parts = formatter.formatToParts(d);
+      const hour = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
+      const minute = parseInt(parts.find(p => p.type === "minute")?.value ?? "0", 10);
+      return hour * 60 + minute;
+    }
+
     // Lane assignment for overlap handling
     type Slot = { startMins: number; endMins: number; lane: number; ev: CalendarEvent };
     const slots: Slot[] = dayEvs.map(ev => {
+      const tz = eventTz(ev);
       const cs = new Date(ev.start) < dayStart ? dayStart : new Date(ev.start);
       const ce = new Date(ev.end)   > dayEnd   ? dayEnd   : new Date(ev.end);
-      const startMins = cs.getHours() * 60 + cs.getMinutes();
-      const endMins   = Math.max(startMins + 15, ce.getHours() * 60 + ce.getMinutes());
+      const startMins = toLocalMinutes(cs, tz, dayStart, dayEnd);
+      const endMins   = Math.max(startMins + 15, toLocalMinutes(ce, tz, dayStart, dayEnd));
       return { startMins, endMins, lane: -1, ev };
     });
     slots.sort((a, b) => a.startMins - b.startMins);
@@ -2279,8 +2316,9 @@ function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: st
       const leftPct  = numLanes > 1 ? (lane / numLanes) * 96 + 1 : 1;
       const widthStr = numLanes > 1 ? `${96 / numLanes}%` : "calc(100% - 2px)";
       const isPast   = new Date(ev.end) < now;
-      const timeStr  = new Date(ev.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const endStr   = new Date(ev.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const tz = eventTz(ev);
+      const timeStr  = new Date(ev.start).toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit" });
+      const endStr   = new Date(ev.end).toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit" });
       const descHtml = ev.description ? `<div style="margin-top:2px;color:#555">${escHtml(ev.description.slice(0, 100))}</div>` : "";
       const attHtml  = ev.attendees?.length ? `<div style="color:#888;margin-top:2px">👤 ${escHtml(ev.attendees.slice(0, 3).join(", "))}</div>` : "";
       return `<details class="week-ev${isPast ? " past" : ""}" style="top:${top}px;min-height:${height}px;left:${leftPct.toFixed(1)}%;width:${widthStr}">

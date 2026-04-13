@@ -420,6 +420,7 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       location: z.string().optional().describe("Optional location or video call URL"),
       uid: z.string().optional().describe("Stable event UID — reuse the same UID to send an update for an existing invite"),
       video_url: z.string().optional().describe("Explicit video call URL to embed (overrides Daily.co auto-creation)"),
+      timezone: z.string().optional().describe("IANA timezone name (e.g. \"America/Los_Angeles\") — defaults to UTC. Calendar clients will display the event in this timezone."),
     },
     async (args) => {
       const resolved = await resolveTargetAccount({ token: args.token, account: args.from_account }, caller, "send_event_invite");
@@ -432,7 +433,7 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       }
       try {
         return await runTool("send_event_invite", sendInviteFrom, async () => {
-          const result = await toolSendEventInvite({ fromAccount: sendInviteFrom, to: args.to, title: args.title, start: args.start, end: args.end, description: args.description, location: args.location, uid: args.uid, video_url: args.video_url });
+          const result = await toolSendEventInvite({ fromAccount: sendInviteFrom, to: args.to, title: args.title, start: args.start, end: args.end, description: args.description, location: args.location, uid: args.uid, video_url: args.video_url, timezone: args.timezone });
           recordAccountSend(sendInviteFrom);
           return okContent(result);
         });
@@ -817,6 +818,7 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       end:         z.string().optional().describe("End in ISO 8601 — required for action='create'"),
       description: z.string().optional(),
       attendees:   z.array(z.string()).optional().describe("Attendee email addresses"),
+      timezone:    z.string().optional().describe("IANA timezone name (e.g. \"America/Los_Angeles\") — defaults to UTC"),
     },
     async (args) => {
       const resolved = await resolveTargetAccount(args, caller, "manage_event");
@@ -837,8 +839,8 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       }
       try {
         return await runTool("manage_event", account, async () => {
-          if (args.action === "create") return okContent(await toolCreateEvent({ account, title: args.title!, start: args.start!, end: args.end!, description: args.description, attendees: args.attendees }));
-          if (args.action === "update") return okContent(await toolUpdateEvent({ account, event_id: args.event_id!, title: args.title, start: args.start, end: args.end, description: args.description, attendees: args.attendees }));
+          if (args.action === "create") return okContent(await toolCreateEvent({ account, title: args.title!, start: args.start!, end: args.end!, description: args.description, attendees: args.attendees, timezone: args.timezone }));
+          if (args.action === "update") return okContent(await toolUpdateEvent({ account, event_id: args.event_id!, title: args.title, start: args.start, end: args.end, description: args.description, attendees: args.attendees, timezone: args.timezone }));
           if (args.action === "delete") return okContent(await toolDeleteEvent({ account, event_id: args.event_id! }));
           return mcpError("VALIDATION_ERROR", `Unknown action: ${args.action}`, false);
         });

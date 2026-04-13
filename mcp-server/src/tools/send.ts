@@ -4,6 +4,7 @@ import { JmapClient } from "../clients/jmap.js";
 import { randomUUID } from "node:crypto";
 import { createDailyRoom, isDailyConfigured } from "../clients/daily.js";
 import { createMeetSpace, isMeetConfigured } from "../clients/google-meet.js";
+import { validateTimezone, toICalDateUtc, toICalDateLocal, buildVTimezone } from "../lib/timezone.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -462,24 +463,51 @@ function buildIcs(params: {
   end: string;
   description?: string;
   location?: string;
+  timezone?: string;
   createdAt: string;
 }): string {
+  const hasTimezone = params.timezone && params.timezone.toLowerCase() !== "utc";
+  const tz = params.timezone || "UTC";
+
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Clawmail//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:REQUEST",
-    "BEGIN:VEVENT",
-    foldLine(`UID:${params.uid}`),
-    foldLine(`DTSTART:${toICalDate(params.start)}`),
-    foldLine(`DTEND:${toICalDate(params.end)}`),
-    foldLine(`DTSTAMP:${toICalDate(params.createdAt)}`),
-    foldLine(`SUMMARY:${icalEscape(params.title)}`),
-    foldLine(`ORGANIZER;CN=${icalEscape(params.organizer)}:mailto:${params.organizer}`),
-    "SEQUENCE:0",
-    "STATUS:CONFIRMED",
   ];
+
+  // Add VTIMEZONE block if timezone is specified and not UTC
+  if (hasTimezone) {
+    const tzLines = buildVTimezone(tz, new Date(params.start));
+    lines.push(...tzLines);
+  }
+
+  lines.push("BEGIN:VEVENT");
+  lines.push(foldLine(`UID:${params.uid}`));
+
+  // Emit DTSTART with TZID or UTC Z suffix
+  if (hasTimezone) {
+    const localStart = toICalDateLocal(params.start, tz);
+    lines.push(foldLine(`DTSTART;TZID=${tz}:${localStart}`));
+  } else {
+    const utcStart = toICalDateUtc(params.start);
+    lines.push(foldLine(`DTSTART:${utcStart}`));
+  }
+
+  // Emit DTEND with TZID or UTC Z suffix
+  if (hasTimezone) {
+    const localEnd = toICalDateLocal(params.end, tz);
+    lines.push(foldLine(`DTEND;TZID=${tz}:${localEnd}`));
+  } else {
+    const utcEnd = toICalDateUtc(params.end);
+    lines.push(foldLine(`DTEND:${utcEnd}`));
+  }
+
+  lines.push(foldLine(`DTSTAMP:${toICalDateUtc(params.createdAt)}`));
+  lines.push(foldLine(`SUMMARY:${icalEscape(params.title)}`));
+  lines.push(foldLine(`ORGANIZER;CN=${icalEscape(params.organizer)}:mailto:${params.organizer}`));
+  lines.push("SEQUENCE:0", "STATUS:CONFIRMED");
 
   for (const att of params.attendees) {
     lines.push(foldLine(`ATTENDEE;ROLE=REQ-PARTICIPANT;RSVP=TRUE;CN=${icalEscape(att)}:mailto:${att}`));
@@ -550,12 +578,14 @@ export interface SendEventInviteParams {
    * If omitted and DAILY_API_KEY is configured, a Daily.co room is auto-created.
    */
   video_url?: string;
+  /** IANA timezone name (e.g. "America/Los_Angeles"). Defaults to UTC. */
+  timezone?: string;
 }
 
 export async function toolSendEventInvite(
   params: SendEventInviteParams,
 ): Promise<{ message: string; queued_at: string; uid: string; video_url: string | null }> {
-  const { fromAccount, to, title, start, end, description, location } = params;
+  const { fromAccount, to, title, start, end, description, location, timezone } = params;
 
   // Resolve + validate from
   const fromEmail = fromAccount.includes("@")
@@ -581,6 +611,9 @@ export async function toolSendEventInvite(
   if (endMs <= startMs) throw new Error("end must be after start");
 
   if (!title.trim()) throw new Error("title must not be empty");
+
+  // Validate timezone if provided
+  if (timezone) validateTimezone(timezone);
 
   const toList = Array.isArray(to) ? to : [to];
   validateAddressList(toList, "to");
@@ -609,13 +642,15 @@ export async function toolSendEventInvite(
     end,
     description,
     location: resolvedLocation,
+    timezone,
     createdAt: queuedAt,
   });
 
   // Human-readable body for non-calendar clients
+  const tzLabel = timezone && timezone.toLowerCase() !== "utc" ? ` (${timezone})` : "";
   const textBody = [
     `You are invited to: ${title}`,
-    `When: ${new Date(start).toUTCString()} – ${new Date(end).toUTCString()}`,
+    `When: ${new Date(start).toUTCString()} – ${new Date(end).toUTCString()}${tzLabel}`,
     resolvedLocation ? `Video call: ${resolvedLocation}` : "",
     description ? `\n${description}` : "",
     "",

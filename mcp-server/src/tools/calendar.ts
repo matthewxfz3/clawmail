@@ -1,5 +1,6 @@
 import { JmapClient } from "../clients/jmap.js";
 import { config } from "../config.js";
+import { validateTimezone } from "../lib/timezone.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -12,6 +13,7 @@ export interface CalendarEvent {
   end: string;    // ISO 8601
   description?: string;
   attendees?: string[];
+  timezone?: string;  // IANA timezone name (e.g. "America/Los_Angeles"), defaults to UTC
   createdAt: string;
 }
 
@@ -61,19 +63,21 @@ export async function toolCreateEvent(params: {
   end: string;
   description?: string;
   attendees?: string[];
+  timezone?: string;
 }): Promise<{ event: CalendarEvent; message: string }> {
-  const { account, title, start, end, description, attendees } = params;
+  const { account, title, start, end, description, attendees, timezone } = params;
 
   if (!title.trim()) throw new Error("title must not be empty");
   validateIso(start, "start");
   validateIso(end, "end");
   if (new Date(end) <= new Date(start)) throw new Error("end must be after start");
+  if (timezone) validateTimezone(timezone);
 
   const email = resolveAccount(account);
   const eventId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
 
-  const event: CalendarEvent = { eventId, title, start, end, description, attendees, createdAt };
+  const event: CalendarEvent = { eventId, title, start, end, description, attendees, timezone, createdAt };
   const body = JSON.stringify(event, null, 2);
   const subject = encodeSubject(eventId, title);
 
@@ -149,6 +153,7 @@ export async function toolUpdateEvent(params: {
   end?: string;
   description?: string;
   attendees?: string[];
+  timezone?: string;
 }): Promise<{ event: CalendarEvent; message: string }> {
   const email = resolveAccount(params.account);
   const client = new JmapClient(email);
@@ -166,6 +171,9 @@ export async function toolUpdateEvent(params: {
   }
   if (!emailId || !existing) throw new Error(`Event not found: ${params.event_id}`);
 
+  // Validate timezone if provided
+  if (params.timezone) validateTimezone(params.timezone);
+
   // Merge updates
   const updated: CalendarEvent = {
     ...existing,
@@ -174,6 +182,7 @@ export async function toolUpdateEvent(params: {
     end:         params.end         ?? existing.end,
     description: params.description ?? existing.description,
     attendees:   params.attendees   ?? existing.attendees,
+    timezone:    params.timezone    ?? existing.timezone,
   };
 
   if (params.start) validateIso(updated.start, "start");
