@@ -5,7 +5,7 @@ import { listTokens, createToken, revokeToken } from "./tools/tokens.js";
 import { toolListAccounts } from "./tools/accounts.js";
 import { toolListEmails, toolReadEmail, toolDeleteEmail, toolMarkAsRead, toolMarkAsUnread, toolFlagEmail } from "./tools/mailbox.js";
 import { toolMoveEmail, toolListFolders } from "./tools/folders.js";
-import { toolSendEmail } from "./tools/send.js";
+import { toolSendEmail, toolSendEventInvite } from "./tools/send.js";
 import { toolListEvents, type CalendarEvent } from "./tools/calendar.js";
 import { toolListRules, type RuleCondition, type RuleAction, type MailboxRule } from "./tools/rules.js";
 import { JmapClient } from "./clients/jmap.js";
@@ -645,6 +645,37 @@ async function buildInboxesTab(
       </form>
     </div>`;
 
+  // Test calendar invite form (with video URL auto-generation)
+  const testCalendarForm = `
+    <div class="card">
+      <h2>Send test calendar invite</h2>
+      <p style="font-size:.83rem;color:#666;margin-bottom:18px">Test video link auto-generation (Google Meet or Daily.co).</p>
+      <form method="POST" action="/dashboard/action/send-test-calendar" style="display:grid;gap:14px;max-width:520px">
+        <div>
+          <label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">From account</label>
+          ${accounts.length > 0
+            ? `<select name="from" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e">${fromOptions}</select>`
+            : `<input type="text" name="from" placeholder="agent@${escHtml(config.domain)}" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required>`}
+        </div>
+        <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">To</label><input type="text" name="to" placeholder="recipient@example.com" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
+        <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Event Title</label><input type="text" name="title" value="Test Meeting with Video" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Start time</label><input type="datetime-local" name="start" value="2026-04-15T14:00" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
+          <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">End time</label><input type="datetime-local" name="end" value="2026-04-15T14:30" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
+        </div>
+        <div>
+          <label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Description</label>
+          <textarea name="description" rows="2" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical;color:#1a1a2e;background:#fff">Testing calendar invite with auto-generated video link (Google Meet or Daily.co).</textarea>
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary" style="padding:9px 22px;font-size:.88rem">Send Calendar Invite →</button>
+        </div>
+      </form>
+      <div style="font-size:.78rem;color:#888;margin-top:12px;padding:10px;background:#f8fafb;border-radius:6px">
+        <strong>Note:</strong> If Google Meet is connected, a video link will auto-generate. Otherwise Daily.co will be used (if configured).
+      </div>
+    </div>`;
+
   // Domain filter bar — only shown when multiple domains exist
   let domainFilterBar = "";
   if (config.allowedDomains.length > 1) {
@@ -708,7 +739,7 @@ async function buildInboxesTab(
           </div>`;
       })();
 
-  return domainFilterBar + testEmailForm + accountList;
+  return domainFilterBar + testEmailForm + testCalendarForm + accountList;
 }
 
 // ---------------------------------------------------------------------------
@@ -2685,6 +2716,37 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     try {
       await toolSendEmail({ fromAccount: from, to, subject, body: bodyText });
       res.writeHead(302, { "Location": `/dashboard?tab=inboxes&sent=1` });
+    } catch (e) {
+      const errMsg = encodeURIComponent(e instanceof Error ? e.message : String(e));
+      res.writeHead(302, { "Location": `/dashboard?tab=inboxes&err=${errMsg}` });
+    }
+    res.end();
+    return;
+  }
+
+  // POST /dashboard/action/send-test-calendar
+  if (path === "/dashboard/action/send-test-calendar" && req.method === "POST") {
+    const body = await readBody(req);
+    const form = parseFormBody(body);
+    const from = form["from"] ?? "";
+    const to = form["to"] ?? "";
+    const title = form["title"] ?? "Test Meeting";
+    const description = form["description"] ?? "Test calendar invite with auto-generated video link";
+    const startStr = form["start"] ?? "2026-04-15T14:00";
+    const endStr = form["end"] ?? "2026-04-15T14:30";
+    try {
+      // Parse datetime-local format (YYYY-MM-DDTHH:MM) to ISO string
+      const start = new Date(startStr + ":00").toISOString();
+      const end = new Date(endStr + ":00").toISOString();
+      await toolSendEventInvite({
+        fromAccount: from,
+        to,
+        title,
+        start,
+        end,
+        description,
+      });
+      res.writeHead(302, { "Location": `/dashboard?tab=inboxes&ok=${encodeURIComponent("Calendar invite sent! Check the email for the video link.")}` });
     } catch (e) {
       const errMsg = encodeURIComponent(e instanceof Error ? e.message : String(e));
       res.writeHead(302, { "Location": `/dashboard?tab=inboxes&err=${errMsg}` });
