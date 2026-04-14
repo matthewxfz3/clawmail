@@ -628,15 +628,15 @@ async function buildInboxesTab(
       <p style="font-size:.83rem;color:#666;margin-bottom:18px">Verify the send pipeline end-to-end.</p>
       <form method="POST" action="/dashboard/action/send-test-email" style="display:grid;gap:14px;max-width:520px">
         <div>
-          <label>From account</label>
+          <label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">From account</label>
           ${accounts.length > 0
             ? `<select name="from" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e">${fromOptions}</select>`
-            : `<input type="text" name="from" placeholder="agent@${escHtml(config.domain)}" style="color:#1a1a2e;background:#fff" required>`}
+            : `<input type="text" name="from" placeholder="agent@${escHtml(config.domain)}" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required>`}
         </div>
-        <div><label>To</label><input type="text" name="to" placeholder="recipient@example.com" style="color:#1a1a2e;background:#fff" required></div>
-        <div><label>Subject</label><input type="text" name="subject" value="Test email from Clawmail" style="color:#1a1a2e;background:#fff" required></div>
+        <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">To</label><input type="text" name="to" placeholder="recipient@example.com" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
+        <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Subject</label><input type="text" name="subject" value="Test email from Clawmail" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
         <div>
-          <label>Body</label>
+          <label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Body</label>
           <textarea name="body" rows="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical;color:#1a1a2e;background:#fff">Hello — this is a test email sent from the Clawmail dashboard.\n\nIf you received this, the send pipeline is working correctly.</textarea>
         </div>
         <div>
