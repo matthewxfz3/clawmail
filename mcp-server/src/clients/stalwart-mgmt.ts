@@ -50,10 +50,10 @@ const DEFAULT_QUOTA_BYTES = 1_073_741_824; // 1 GiB disk quota
  * Ensure the mail domain principal exists in Stalwart.
  * Safe to call multiple times — silently ignores duplicate errors.
  */
-export async function ensureDomainExists(): Promise<void> {
+export async function ensureDomainExists(domain: string = config.domain): Promise<void> {
   const res = await stalwartFetch("/api/principal", {
     method: "POST",
-    body: JSON.stringify({ type: "domain", name: config.domain }),
+    body: JSON.stringify({ type: "domain", name: domain }),
   });
   if (!res.ok) {
     const body = await res.text();
@@ -77,16 +77,17 @@ export async function ensureDomainExists(): Promise<void> {
  */
 export async function createAccount(
   localPart: string,
+  domain: string = config.domain,
 ): Promise<{ email: string }> {
-  await ensureDomainExists();
+  await ensureDomainExists(domain);
 
   if (await accountExists(localPart)) {
     throw new Error(
-      `Account already exists: ${localPart}@${config.domain}`,
+      `Account already exists: ${localPart}@${domain}`,
     );
   }
 
-  const email = `${localPart}@${config.domain}`;
+  const email = `${localPart}@${domain}`;
   const body = JSON.stringify({
     type: "individual",
     name: localPart,
@@ -104,7 +105,7 @@ export async function createAccount(
 
   await assertOk(res, `createAccount(${localPart})`);
 
-  return { email: `${localPart}@${config.domain}` };
+  return { email };
 }
 
 /**
@@ -154,14 +155,19 @@ export async function listAccounts(): Promise<
     ? ((data as { items: Array<Record<string, unknown>> }).items)
     : [];
 
-  return items.map((item) => ({
-    name: String(item["name"] ?? ""),
-    email: `${String(item["name"] ?? "")}@${config.domain}`,
-    description:
-      item["description"] !== undefined
-        ? String(item["description"])
-        : undefined,
-  }));
+  return items.map((item) => {
+    // Try to get actual email from Stalwart response (stored in emails array)
+    const storedEmails = item["emails"] as string[] | undefined;
+    const email = storedEmails?.[0] ?? `${String(item["name"] ?? "")}@${config.domain}`;
+    return {
+      name: String(item["name"] ?? ""),
+      email,
+      description:
+        item["description"] !== undefined
+          ? String(item["description"])
+          : undefined,
+    };
+  });
 }
 
 /**
