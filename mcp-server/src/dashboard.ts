@@ -664,6 +664,10 @@ async function buildInboxesTab(
           <div><label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">End time</label><input type="datetime-local" name="end" value="2026-04-15T14:30" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required></div>
         </div>
         <div>
+          <label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Timezone (IANA format)</label>
+          <input type="text" name="timezone" placeholder="e.g. America/Los_Angeles, Europe/London, UTC" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e" required>
+        </div>
+        <div>
           <label style="color:#555;font-weight:600;font-size:.78rem;display:block;margin-bottom:4px">Description</label>
           <textarea name="description" rows="2" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical;color:#1a1a2e;background:#fff">Testing calendar invite with auto-generated video link (Google Meet or Daily.co).</textarea>
         </div>
@@ -2734,10 +2738,40 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     const description = form["description"] ?? "Test calendar invite with auto-generated video link";
     const startStr = form["start"] ?? "2026-04-15T14:00";
     const endStr = form["end"] ?? "2026-04-15T14:30";
+    const timezone = form["timezone"] ?? "UTC";
     try {
-      // Parse datetime-local format (YYYY-MM-DDTHH:MM) to ISO string
-      const start = new Date(startStr + ":00").toISOString();
-      const end = new Date(endStr + ":00").toISOString();
+      // Parse datetime-local format as local time in the given timezone, then convert to UTC
+      // datetime-local gives "YYYY-MM-DDTHH:MM" which represents local time (no timezone info)
+      // We need to interpret it in the user's timezone and convert to ISO string
+      const convertLocalToUtc = (localDateStr: string, tz: string): string => {
+        // Create a date assuming the string is UTC (temporary)
+        const tempDate = new Date(localDateStr + ":00Z");
+        // Use Intl to get the offset for the target timezone
+        const formatter = new Intl.DateTimeFormat("en-US", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+          timeZone: tz,
+        });
+        const parts = formatter.formatToParts(tempDate);
+        const tzDate = new Date(
+          parseInt(parts.find(p => p.type === "year")!.value),
+          parseInt(parts.find(p => p.type === "month")!.value) - 1,
+          parseInt(parts.find(p => p.type === "day")!.value),
+          parseInt(parts.find(p => p.type === "hour")!.value),
+          parseInt(parts.find(p => p.type === "minute")!.value),
+          parseInt(parts.find(p => p.type === "second")!.value),
+        );
+        const offset = tempDate.getTime() - tzDate.getTime();
+        const utcDate = new Date(new Date(localDateStr + ":00").getTime() + offset);
+        return utcDate.toISOString();
+      };
+      const start = convertLocalToUtc(startStr, timezone);
+      const end = convertLocalToUtc(endStr, timezone);
       await toolSendEventInvite({
         fromAccount: from,
         to,
@@ -2745,6 +2779,7 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
         start,
         end,
         description,
+        timezone,
       });
       res.writeHead(302, { "Location": `/dashboard?tab=inboxes&ok=${encodeURIComponent("Calendar invite sent! Check the email for the video link.")}` });
     } catch (e) {
