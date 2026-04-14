@@ -630,14 +630,14 @@ async function buildInboxesTab(
         <div>
           <label>From account</label>
           ${accounts.length > 0
-            ? `<select name="from" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff">${fromOptions}</select>`
-            : `<input type="text" name="from" placeholder="agent@${escHtml(config.domain)}" required>`}
+            ? `<select name="from" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;background:#fff;color:#1a1a2e">${fromOptions}</select>`
+            : `<input type="text" name="from" placeholder="agent@${escHtml(config.domain)}" style="color:#1a1a2e;background:#fff" required>`}
         </div>
-        <div><label>To</label><input type="text" name="to" placeholder="recipient@example.com" required></div>
-        <div><label>Subject</label><input type="text" name="subject" value="Test email from Clawmail" required></div>
+        <div><label>To</label><input type="text" name="to" placeholder="recipient@example.com" style="color:#1a1a2e;background:#fff" required></div>
+        <div><label>Subject</label><input type="text" name="subject" value="Test email from Clawmail" style="color:#1a1a2e;background:#fff" required></div>
         <div>
           <label>Body</label>
-          <textarea name="body" rows="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical">Hello — this is a test email sent from the Clawmail dashboard.\n\nIf you received this, the send pipeline is working correctly.</textarea>
+          <textarea name="body" rows="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.88rem;resize:vertical;color:#1a1a2e;background:#fff">Hello — this is a test email sent from the Clawmail dashboard.\n\nIf you received this, the send pipeline is working correctly.</textarea>
         </div>
         <div>
           <button type="submit" class="btn btn-primary" style="padding:9px 22px;font-size:.88rem">Send →</button>
