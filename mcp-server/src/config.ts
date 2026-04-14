@@ -1,7 +1,15 @@
 import { parseApiKeyMap, type CallerIdentity } from "./auth.js";
 
+// Compute domain and allowedDomains before config object
+const _domain = process.env.DOMAIN ?? (() => { throw new Error("DOMAIN env var required") })();
+const _extraDomains = (process.env.ALLOWED_DOMAINS ?? "")
+  .split(",")
+  .map(d => d.trim().toLowerCase())
+  .filter(Boolean);
+
 export const config = {
-  domain: process.env.DOMAIN ?? (() => { throw new Error("DOMAIN env var required") })(),
+  domain: _domain,
+  allowedDomains: [...new Set([_domain.toLowerCase(), ..._extraDomains])],
   stalwart: {
     url: process.env.STALWART_URL ?? "http://localhost:8080",
     adminUser: process.env.STALWART_ADMIN_USER ?? "admin",

@@ -80,11 +80,11 @@ export async function toolSendEmail(
     throw new Error(`Invalid from_account: "${fromAccount}"`);
   }
 
-  // Ensure the sender belongs to our domain.
+  // Ensure the sender belongs to an allowed domain.
   const domain = fromEmail.split("@")[1];
-  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+  if (!config.allowedDomains.includes(domain.toLowerCase())) {
     throw new Error(
-      `from_account must belong to the configured domain "${config.domain}", got "${domain}"`,
+      `from_account must belong to an allowed domain. Allowed: ${config.allowedDomains.join(", ")}`,
     );
   }
 
@@ -173,8 +173,8 @@ export async function toolReplyToEmail(
   if (!isValidEmail(fromEmail)) throw new Error(`Invalid from_account: "${params.fromAccount}"`);
 
   const domain = fromEmail.split("@")[1];
-  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
-    throw new Error(`from_account must belong to the configured domain "${config.domain}"`);
+  if (!config.allowedDomains.includes(domain.toLowerCase())) {
+    throw new Error(`from_account must belong to an allowed domain. Allowed: ${config.allowedDomains.join(", ")}`);
   }
 
   const client = new JmapClient(fromEmail);
@@ -263,8 +263,8 @@ export async function toolForwardEmail(
   if (!isValidEmail(fromEmail)) throw new Error(`Invalid from_account: "${params.fromAccount}"`);
 
   const domain = fromEmail.split("@")[1];
-  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
-    throw new Error(`from_account must belong to the configured domain "${config.domain}"`);
+  if (!config.allowedDomains.includes(domain.toLowerCase())) {
+    throw new Error(`from_account must belong to an allowed domain. Allowed: ${config.allowedDomains.join(", ")}`);
   }
 
   const toList = Array.isArray(params.to) ? params.to : [params.to];
@@ -350,8 +350,8 @@ export async function toolRespondToInvite(
   if (!isValidEmail(fromEmail)) throw new Error(`Invalid from_account: "${fromAccount}"`);
 
   const domain = fromEmail.split("@")[1];
-  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
-    throw new Error(`from_account must belong to the configured domain "${config.domain}"`);
+  if (!config.allowedDomains.includes(domain.toLowerCase())) {
+    throw new Error(`from_account must belong to an allowed domain. Allowed: ${config.allowedDomains.join(", ")}`);
   }
 
   if (!isValidEmail(organizer)) throw new Error(`Invalid organizer email: "${organizer}"`);
@@ -598,9 +598,9 @@ export async function toolSendEventInvite(
   }
 
   const domain = fromEmail.split("@")[1];
-  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+  if (!config.allowedDomains.includes(domain.toLowerCase())) {
     throw new Error(
-      `from_account must belong to the configured domain "${config.domain}", got "${domain}"`,
+      `from_account must belong to an allowed domain. Allowed: ${config.allowedDomains.join(", ")}`,
     );
   }
 
@@ -763,9 +763,9 @@ export async function toolCancelEventInvite(
   }
 
   const domain = fromEmail.split("@")[1];
-  if (domain.toLowerCase() !== config.domain.toLowerCase()) {
+  if (!config.allowedDomains.includes(domain.toLowerCase())) {
     throw new Error(
-      `from_account must belong to the configured domain "${config.domain}", got "${domain}"`,
+      `from_account must belong to an allowed domain. Allowed: ${config.allowedDomains.join(", ")}`,
     );
   }
 

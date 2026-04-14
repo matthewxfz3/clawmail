@@ -216,9 +216,22 @@ function createMcpServer(caller: CallerIdentity): McpServer {
   server.tool(
     "create_account",
     "Create a new email account. Returns the account email and a token for all subsequent operations on that account. The token is shown only once — store it securely.",
-    { local_part: z.string().describe("The local part (before @) of the new email address") },
+    {
+      local_part: z.string().describe("The local part (before @) of the new email address"),
+      domain: z.string().optional().describe(
+        `Domain for the new account. Defaults to ${config.domain}. ` +
+        `Specifying a non-default domain requires admin role. ` +
+        `Allowed domains: ${config.allowedDomains.join(", ")}`
+      ),
+    },
     async (args) => {
-      // create_account is open to all authenticated callers — no admin check needed.
+      // Custom domain requires admin role
+      const customDomain = args.domain && args.domain.toLowerCase() !== config.domain.toLowerCase();
+      if (customDomain && caller.role !== "admin") {
+        return mcpError("AUTH_ERROR", "Specifying a custom domain requires admin role", false);
+      }
+
+      // create_account is open to all authenticated callers — no admin check needed for default domain.
       recordCall("create_account");
       if (!checkRateLimit("create_account", apiKey, config.limits.createAccountPerHour, 60 * 60 * 1000)) {
         recordRateLimit("create_account");
@@ -226,7 +239,7 @@ function createMcpServer(caller: CallerIdentity): McpServer {
       }
       try {
         return await runTool("create_account", "", async () => {
-          const result = await toolCreateAccount(args.local_part);
+          const result = await toolCreateAccount(args.local_part, args.domain);
           recordAccountCreated(result.email);
           return okContent(result);
         });
@@ -263,7 +276,10 @@ function createMcpServer(caller: CallerIdentity): McpServer {
   server.tool(
     "delete_account",
     "Permanently delete an email account from the mail server",
-    { local_part: z.string().describe("The local part (before @) of the account to delete") },
+    {
+      local_part: z.string().describe("The local part (before @) of the account to delete"),
+      domain: z.string().optional().describe(`Domain of the account. Defaults to ${config.domain}`),
+    },
     async (args) => {
       const denied = authorizeAndRecord(caller, "delete_account");
       if (denied) return denied;
@@ -273,7 +289,7 @@ function createMcpServer(caller: CallerIdentity): McpServer {
         return rateLimitErr("delete_account");
       }
       try {
-        return await runTool("delete_account", "", () => toolDeleteAccount(args.local_part).then(okContent));
+        return await runTool("delete_account", "", () => toolDeleteAccount(args.local_part, args.domain).then(okContent));
       } catch (err) {
         recordError("delete_account");
         return errContent(err instanceof Error ? err.message : String(err));

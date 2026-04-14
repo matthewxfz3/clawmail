@@ -49,16 +49,25 @@ export interface CreateAccountResult {
   message: string;
 }
 
-export async function toolCreateAccount(localPart: string): Promise<CreateAccountResult> {
+export async function toolCreateAccount(localPart: string, domain?: string): Promise<CreateAccountResult> {
   validateLocalPart(localPart);
 
-  const email = `${localPart}@${config.domain}`;
+  const targetDomain = domain ?? config.domain;
+
+  // Validate domain is in allowedDomains
+  if (!config.allowedDomains.includes(targetDomain.toLowerCase())) {
+    throw new Error(
+      `Domain "${targetDomain}" is not allowed. Allowed domains: ${config.allowedDomains.join(", ")}`,
+    );
+  }
+
+  const email = `${localPart}@${targetDomain}`;
 
   if (await accountExists(localPart)) {
     throw new Error(`Account already exists: ${email}`);
   }
 
-  await createAccount(localPart);
+  await createAccount(localPart, targetDomain);
 
   // Auto-generate a user-scoped token for the new account.
   const { plaintext, info } = await createToken(email, "user", `auto-created with account`);
@@ -83,14 +92,15 @@ export interface DeleteAccountResult {
   token_revocation_warning?: string;
 }
 
-export async function toolDeleteAccount(localPart: string): Promise<DeleteAccountResult> {
+export async function toolDeleteAccount(localPart: string, domain?: string): Promise<DeleteAccountResult> {
   validateLocalPart(localPart);
 
   if (RESERVED_LOCAL_PARTS.has(localPart)) {
     throw new Error(`Cannot delete reserved system account: ${localPart}`);
   }
 
-  const email = `${localPart}@${config.domain}`;
+  const targetDomain = domain ?? config.domain;
+  const email = `${localPart}@${targetDomain}`;
 
   if (!(await accountExists(localPart))) {
     throw new Error(`Account does not exist: ${email}`);
