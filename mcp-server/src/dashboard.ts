@@ -159,7 +159,9 @@ const CSS = `
   .topbar-logo{width:28px;height:28px;background:var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:800;letter-spacing:-.5px;flex-shrink:0}
   .topbar h1{font-size:1rem;font-weight:700;letter-spacing:-.2px}
   .topbar-right{display:flex;align-items:center;gap:6px}
-  .topbar-domain{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.75);border-radius:6px;padding:3px 10px;font-size:.75rem;font-family:'JetBrains Mono',monospace;letter-spacing:.3px}
+  .topbar-domain{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.75);border-radius:6px;padding:3px 10px;font-size:.75rem;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;cursor:pointer;transition:background .15s,color .15s}
+  .topbar-domain:hover{background:rgba(255,255,255,.15);color:#fff}
+  .topbar-domain-active{background:var(--accent);color:#fff !important;border-color:var(--accent) !important}
   .topbar-signout{color:rgba(255,255,255,.55);font-size:.82rem;text-decoration:none;padding:6px 10px;border-radius:6px;transition:background .15s}
   .topbar-signout:hover{background:rgba(255,255,255,.1);color:#fff}
   /* ── tab bar ── */
@@ -314,7 +316,23 @@ function page(title: string, body: string): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Clawmail</title><link rel="icon" type="image/svg+xml" href="${favicon}"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>${body}</body></html>`;
 }
 
-function topbar(): string {
+function topbar(selectedDomain?: string): string {
+  let domainBadges: string;
+
+  if (config.allowedDomains.length === 1) {
+    // Single domain — plain badge, no interactivity (same as today)
+    domainBadges = `<span class="topbar-domain">${escHtml(config.allowedDomains[0])}</span>`;
+  } else {
+    // Multiple domains — clickable badges; "All" + one per domain
+    const allActive = !selectedDomain;
+    const allBadge = `<a href="/dashboard?tab=inboxes" class="topbar-domain${allActive ? " topbar-domain-active" : ""}" style="text-decoration:none">All domains</a>`;
+    const domainLinks = config.allowedDomains.map(d => {
+      const isActive = d === selectedDomain;
+      return `<a href="/dashboard?tab=inboxes&domain=${encodeURIComponent(d)}" class="topbar-domain${isActive ? " topbar-domain-active" : ""}" style="text-decoration:none">${escHtml(d)}</a>`;
+    }).join("");
+    domainBadges = allBadge + domainLinks;
+  }
+
   return `
     <div class="topbar">
       <a class="topbar-brand" href="/dashboard">
@@ -322,7 +340,7 @@ function topbar(): string {
         <h1>Clawmail</h1>
       </a>
       <div class="topbar-right">
-        <span class="topbar-domain">${escHtml(config.domain)}</span>
+        ${domainBadges}
         <a class="topbar-signout" href="/dashboard/logout">Sign out</a>
       </div>
     </div>`;
@@ -565,9 +583,17 @@ async function buildOverview(serviceUrl: string, accounts: Array<{ email: string
 // Tab: Inboxes
 // ---------------------------------------------------------------------------
 
-async function buildInboxesTab(accounts: Array<{ email: string; name: string }>): Promise<string> {
+async function buildInboxesTab(
+  accounts: Array<{ email: string; name: string }>,
+  selectedDomain?: string,
+): Promise<string> {
+  // Filter accounts by selected domain if one is specified
+  const filteredAccounts = selectedDomain
+    ? accounts.filter(a => a.email.toLowerCase().endsWith("@" + selectedDomain.toLowerCase()))
+    : accounts;
+
   // Fetch inbox + sent counts for all accounts in parallel (capped at 50).
-  const capped = accounts.slice(0, 50);
+  const capped = filteredAccounts.slice(0, 50);
   const [inboxCounts, sentCounts] = await Promise.all([
     Promise.allSettled(
       capped.map(async (a) => {
@@ -619,11 +645,26 @@ async function buildInboxesTab(accounts: Array<{ email: string; name: string }>)
       </form>
     </div>`;
 
+  // Domain filter bar — only shown when multiple domains exist
+  let domainFilterBar = "";
+  if (config.allowedDomains.length > 1) {
+    const allActive = !selectedDomain;
+    const tabs = [
+      `<a href="/dashboard?tab=inboxes" class="${allActive ? "active" : ""}">All (${accounts.length})</a>`,
+      ...config.allowedDomains.map(d => {
+        const count = accounts.filter(a => a.email.toLowerCase().endsWith("@" + d)).length;
+        const isActive = d === selectedDomain;
+        return `<a href="/dashboard?tab=inboxes&domain=${encodeURIComponent(d)}" class="${isActive ? "active" : ""}">${escHtml(d)} (${count})</a>`;
+      }),
+    ].join("");
+    domainFilterBar = `<div class="view-toggle" style="margin-bottom:14px">${tabs}</div>`;
+  }
+
   // Account list (shown second)
-  const accountList = accounts.length === 0
+  const accountList = filteredAccounts.length === 0
     ? `<div class="card"><h2>Agent accounts</h2><p class="empty">No accounts yet — use the <code>create_account</code> MCP tool to create one.</p></div>`
     : (() => {
-        const rows = accounts.map((a, i) => {
+        const rows = filteredAccounts.map((a, i) => {
           const ts = getAccountCreatedAt(a.email);
           const createdStr = ts
             ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -643,12 +684,12 @@ async function buildInboxesTab(accounts: Array<{ email: string; name: string }>)
               </td>
             </tr>`;
         }).join("");
-        const cappedNote = accounts.length > 50
-          ? `<p style="font-size:.72rem;color:#aaa;margin-top:8px">Inbox counts shown for first 50 of ${accounts.length} accounts.</p>`
+        const cappedNote = filteredAccounts.length > 50
+          ? `<p style="font-size:.72rem;color:#aaa;margin-top:8px">Inbox counts shown for first 50 of ${filteredAccounts.length} accounts.</p>`
           : "";
         return `
           <div class="card">
-            <h2>Agent accounts (${accounts.length})</h2>
+            <h2>Agent accounts (${filteredAccounts.length})</h2>
             <table>
               <thead>
                 <tr>
@@ -667,7 +708,7 @@ async function buildInboxesTab(accounts: Array<{ email: string; name: string }>)
           </div>`;
       })();
 
-  return testEmailForm + accountList;
+  return domainFilterBar + testEmailForm + accountList;
 }
 
 // ---------------------------------------------------------------------------
@@ -2439,7 +2480,7 @@ function buildWeekView(events: CalendarEvent[], weekDateStr: string, account: st
 // Main dashboard page (tab routing)
 // ---------------------------------------------------------------------------
 
-async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<FlashEntry, "createdAt">): Promise<string> {
+async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<FlashEntry, "createdAt">, selectedDomain?: string): Promise<string> {
   const accountsResult = await toolListAccounts().catch(() => ({ accounts: [] as Array<{ email: string; name: string }>, count: 0 }));
   const accounts = accountsResult.accounts;
 
@@ -2480,7 +2521,7 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<Flas
 
   let content: string;
   if (tab === "inboxes") {
-    content = (flashBanner ? `<div>${flashBanner}</div>` : "") + await buildInboxesTab(accounts);
+    content = (flashBanner ? `<div>${flashBanner}</div>` : "") + await buildInboxesTab(accounts, selectedDomain);
   } else if (tab === "metrics") {
     content = await buildMetricsTab(accounts);
   } else if (tab === "tokens") {
@@ -2502,7 +2543,7 @@ async function buildDashboard(serviceUrl: string, tab: string, flash?: Omit<Flas
     : "overview";
 
   return page("Dashboard", `
-    ${topbar()}
+    ${topbar(selectedDomain)}
     ${tabBar(activeTab)}
     <div class="container">${content}</div>
   `);
@@ -3070,6 +3111,7 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
 
   // GET /dashboard (main tabbed view)
   const tab = url.searchParams.get("tab") ?? "overview";
+  const selectedDomain = url.searchParams.get("domain") ?? undefined;
   const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
   const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers["host"] ?? `localhost:${config.port}`;
   const serviceUrl = `${proto}://${host}`;
@@ -3097,7 +3139,7 @@ export async function handleDashboard(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
-  const html = await buildDashboard(serviceUrl, tab, flash);
+  const html = await buildDashboard(serviceUrl, tab, flash, selectedDomain);
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
 }
