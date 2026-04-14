@@ -1625,12 +1625,12 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
           <div>
             <label style="font-size:.78rem;font-weight:600;color:#555;display:block;margin-bottom:4px">Client ID</label>
             <input type="text" name="client_id" value="${escHtml(storedClientId)}" placeholder="123456789-abc.apps.googleusercontent.com"
-              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace">
+              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace;color:#1a1a2e;background:#fff">
           </div>
           <div>
             <label style="font-size:.78rem;font-weight:600;color:#555;display:block;margin-bottom:4px">Client Secret</label>
             <input type="password" name="client_secret" value="${escHtml(config.googleMeet.clientSecret)}" placeholder="GOCSPX-••••••••••••••"
-              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace">
+              style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;font-family:monospace;color:#1a1a2e;background:#fff">
           </div>
         </div>
         <button type="submit" class="btn btn-primary">Connect Google Account →</button>
