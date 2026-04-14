@@ -18,6 +18,21 @@ export async function isMeetConfigured(): Promise<boolean> {
   return clientId.length > 0 && clientSecret.length > 0 && refreshToken.length > 0;
 }
 
+/**
+ * Check if Google Meet integration is both configured AND the refresh token is still valid.
+ * Returns false if credentials are missing or the refresh token is expired.
+ */
+export async function isMeetValid(): Promise<boolean> {
+  try {
+    if (!(await isMeetConfigured())) return false;
+    // Try to get an access token — if this fails, the refresh token is invalid
+    await getAccessToken();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Exchange a refresh token for a fresh access token. */
 async function getAccessToken(): Promise<string> {
   const { clientId, clientSecret, refreshToken } = await resolveCreds();

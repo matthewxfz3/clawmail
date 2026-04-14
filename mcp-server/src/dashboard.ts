@@ -12,7 +12,7 @@ import { JmapClient } from "./clients/jmap.js";
 import { getMetrics, getSamples, setInboxTotal, getAccountCreatedAt, getCallLog, getBatchLog } from "./metrics.js";
 import { toolConfigureAccount, getAccountSettings } from "./tools/configure.js";
 import { toolCreateFolder, toolDeleteFolder } from "./tools/folders.js";
-import { buildAuthUrl, exchangeCode, isMeetConfigured } from "./clients/google-meet.js";
+import { buildAuthUrl, exchangeCode, isMeetConfigured, isMeetValid } from "./clients/google-meet.js";
 import { readSecret, writeSecret } from "./clients/secret-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -1516,11 +1516,12 @@ function decodeOAuthState(state: string): { clientId: string; clientSecret: stri
 
 async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | "err"; msg: string }): Promise<string> {
   // Read live state from Secret Manager (falls back to env vars)
-  const [smClientId, smClientSecret, smRefreshToken, smDailyKey] = await Promise.all([
+  const [smClientId, smClientSecret, smRefreshToken, smDailyKey, meetValid] = await Promise.all([
     readSecret("google-meet-client-id"),
     readSecret("google-meet-client-secret"),
     readSecret("google-meet-refresh-token"),
     readSecret("daily-api-key"),
+    isMeetValid(),  // Check if the refresh token is actually valid
   ]);
 
   const dailyConfigured  = (config.daily.apiKey || smDailyKey || "").length > 0;
@@ -1574,13 +1575,15 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
     </div>`;
 
   // ── Google Meet card ────────────────────────────────────────────────────────
-  const meetStatus = meetConfigured
+  const meetStatus = meetValid
     ? `<span class="badge ok">Connected</span>`
+    : meetConfigured
+    ? `<span class="badge" style="background:#dc2626">Token expired</span>`
     : `<span class="badge" style="background:#94a3b8">Not connected</span>`;
 
   const callbackUrl = `${serviceUrl}/dashboard/integrations/google/callback`;
 
-  const meetConnectedSection = meetConfigured ? `
+  const meetConnectedSection = meetValid ? `
     <div style="display:flex;align-items:center;gap:12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 16px;margin-bottom:16px">
       <span style="font-size:1.1rem">✓</span>
       <div>
@@ -1588,7 +1591,15 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
         <div style="font-size:.78rem;color:#16a34a;margin-top:2px">Calendar invites will automatically include a Google Meet link</div>
       </div>
     </div>
-    <div style="font-size:.82rem;color:#666;margin-bottom:12px">To disconnect, remove the <code>GOOGLE_MEET_REFRESH_TOKEN</code> environment variable from Cloud Run.</div>` : "";
+    <div style="font-size:.82rem;color:#666;margin-bottom:12px">To disconnect, remove the <code>GOOGLE_MEET_REFRESH_TOKEN</code> environment variable from Cloud Run.</div>`
+    : meetConfigured ? `
+    <div style="display:flex;align-items:center;gap:12px;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+      <span style="font-size:1.1rem">⚠</span>
+      <div>
+        <div style="font-size:.88rem;font-weight:600;color:#991b1b">Refresh token expired</div>
+        <div style="font-size:.78rem;color:#dc2626;margin-top:2px">Re-authorize below to restore Google Meet video links</div>
+      </div>
+    </div>` : "";
 
   const step1 = `
     <div style="margin-bottom:16px">
@@ -1627,7 +1638,7 @@ async function buildIntegrationsPage(serviceUrl: string, flash?: { type: "ok" | 
       </form>
     </div>`;
 
-  const meetSetupSection = meetConfigured ? "" : `
+  const meetSetupSection = meetValid ? "" : `
     <div style="background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px">
       ${step1}
       ${step2}
