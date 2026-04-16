@@ -13,9 +13,11 @@ services:
       - "143:143"
       - "587:587"
       - "8080:8080"
+      - "8443:8443"
     volumes:
       - ./config.toml:/opt/stalwart-mail/etc/config.toml:ro
       - stalwart-data:/opt/stalwart-mail/data
+      - ./certs:/opt/stalwart-mail/etc/certificates:ro
     environment:
       - DOMAIN=localhost
       - DB_HOST=postgres

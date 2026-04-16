@@ -19,7 +19,7 @@ resource "google_dns_record_set" "stalwart_a" {
   type         = "A"
   ttl          = 300
 
-  rrdatas = [google_compute_address.stalwart.address]
+  rrdatas = [google_compute_address.stalwart_primary.address]
 }
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ resource "google_dns_record_set" "spf" {
   ttl          = 300
 
   rrdatas = [
-    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart.address} ~all\""
+    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart_primary.address} ~all\""
   ]
 }
 
@@ -113,7 +113,7 @@ resource "google_dns_record_set" "secondary_stalwart_a" {
   type         = "A"
   ttl          = 300
 
-  rrdatas = [google_compute_address.stalwart.address]
+  rrdatas = [google_compute_address.stalwart_primary.address]
 }
 
 # MX record: fridayx.me → stalwart.fridayx.me (priority 10)
@@ -138,7 +138,7 @@ resource "google_dns_record_set" "secondary_spf" {
   ttl          = 300
 
   rrdatas = [
-    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart.address} ~all\""
+    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart_primary.address} ~all\""
   ]
 }
 

@@ -23,12 +23,22 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
 
       env {
         name  = "STALWART_URL"
-        value = "http://${google_compute_address.stalwart.address}:8080"
+        value = "https://${google_compute_address.stalwart_primary.address}:8443"
+      }
+
+      env {
+        name  = "STALWART_SKIP_TLS_VERIFY"
+        value = "true"
       }
 
       env {
         name  = "ALLOWED_DOMAINS"
         value = var.allowed_domains
+      }
+
+      env {
+        name  = "REDIS_URL"
+        value = "redis://${google_redis_instance.clawmail_cache.host}:${google_redis_instance.clawmail_cache.port}"
       }
 
       # Secret-backed environment variables

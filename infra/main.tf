@@ -36,9 +36,15 @@ variable "region" {
 }
 
 variable "zone" {
-  description = "GCP zone"
+  description = "GCP zone for primary Stalwart VM"
   type        = string
   default     = "us-central1-a"
+}
+
+variable "zone_secondary" {
+  description = "GCP zone for secondary Stalwart VM (for HA failover)"
+  type        = string
+  default     = "us-central1-b"
 }
 
 variable "domain" {

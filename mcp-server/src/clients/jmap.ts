@@ -191,11 +191,15 @@ export class JmapClient {
     // ── Strategy 1: impersonation ────────────────────────────────────────────
     const impersonateAuth = impersonateAuthHeader(this.email);
     try {
-      const res = await fetch(wellKnownUrl, {
+      const fetchOptions: any = {
         method: "GET",
         headers: { Authorization: impersonateAuth, Accept: "application/json" },
         signal: AbortSignal.timeout(5000),
-      });
+      };
+      if (config.stalwart.url.startsWith("https://")) {
+        fetchOptions.dispatcher = config.stalwart.httpsAgent;
+      }
+      const res = await fetch(wellKnownUrl, fetchOptions);
       if (res.ok) {
         const data = (await res.json()) as {
           apiUrl?: string;
@@ -230,10 +234,14 @@ export class JmapClient {
     if (cachedSession !== undefined && Date.now() - cachedSessionAt < CACHE_TTL_MS) return cachedSession;
 
     const wellKnownUrl = new URL("/.well-known/jmap", config.stalwart.url).toString();
-    const res = await fetch(wellKnownUrl, {
+    const fetchOptions: any = {
       method: "GET",
       headers: { Authorization: basicAuthHeader(), Accept: "application/json" },
-    });
+    };
+    if (config.stalwart.url.startsWith("https://")) {
+      fetchOptions.dispatcher = config.stalwart.httpsAgent;
+    }
+    const res = await fetch(wellKnownUrl, fetchOptions);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "<unreadable body>");
@@ -264,7 +272,7 @@ export class JmapClient {
       throw new Error("Cannot determine JMAP principals account ID from session");
     }
 
-    const res = await fetch(session.apiUrl, {
+    const fetchOptions: any = {
       method: "POST",
       headers: {
         Authorization: basicAuthHeader(),
@@ -275,7 +283,11 @@ export class JmapClient {
         using: ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:principals"],
         methodCalls: [["Principal/get", { accountId: principalsAccountId, ids: null }, "pget"]],
       }),
-    });
+    };
+    if (config.stalwart.url.startsWith("https://")) {
+      fetchOptions.dispatcher = config.stalwart.httpsAgent;
+    }
+    const res = await fetch(session.apiUrl, fetchOptions);
 
     if (!res.ok) throw new Error(`Principal/get failed: HTTP ${res.status}`);
 
@@ -314,7 +326,7 @@ export class JmapClient {
       methodCalls: calls,
     });
 
-    const res = await fetch(ctx.apiUrl, {
+    const fetchOptions: any = {
       method: "POST",
       headers: {
         Authorization: ctx.authHeader,
@@ -322,7 +334,11 @@ export class JmapClient {
         Accept: "application/json",
       },
       body,
-    });
+    };
+    if (config.stalwart.url.startsWith("https://")) {
+      fetchOptions.dispatcher = config.stalwart.httpsAgent;
+    }
+    const res = await fetch(ctx.apiUrl, fetchOptions);
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => "<unreadable body>");
