@@ -10,9 +10,6 @@ resource "google_compute_disk" "stalwart_data" {
   zone        = var.zone
   size        = 100  # 100GB for mail data
   description = "Stalwart mail server persistent storage"
-
-  # Regional replication for higher availability
-  resource_policies = []  # Could add backup policies later
 }
 
 # Static external IP so DNS records remain stable across VM restarts/recreates
