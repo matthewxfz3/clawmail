@@ -31,3 +31,8 @@ output "artifact_registry_url" {
   description = "Docker image base URL for the Clawmail MCP server"
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/clawmail/mcp-server"
 }
+
+output "stalwart_persistent_disk" {
+  description = "Persistent disk for Stalwart mail data — survives VM restart"
+  value       = google_compute_disk.stalwart_data.name
+}
