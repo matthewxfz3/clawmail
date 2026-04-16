@@ -2,6 +2,19 @@
 # Stalwart Mail Server — Compute Engine VM
 # ---------------------------------------------------------------------------
 
+# Persistent disk for Stalwart data — regional, auto-replicated
+# Prevents data loss if VM restarts or crashes
+resource "google_compute_disk" "stalwart_data" {
+  name        = "stalwart-data"
+  type        = "pd-standard"
+  zone        = var.zone
+  size        = 100  # 100GB for mail data
+  description = "Stalwart mail server persistent storage"
+
+  # Regional replication for higher availability
+  resource_policies = []  # Could add backup policies later
+}
+
 # Static external IP so DNS records remain stable across VM restarts/recreates
 resource "google_compute_address" "stalwart" {
   name         = "stalwart"
@@ -35,6 +48,43 @@ locals {
     #!/bin/bash
     set -euo pipefail
 
+    # --- Format and mount persistent disk ---
+    # Wait for disk to appear (sdb or sdc depending on device order)
+    for i in {1..30}; do
+      if [ -e /dev/sdb ]; then
+        DISK=/dev/sdb
+        break
+      elif [ -e /dev/sdc ]; then
+        DISK=/dev/sdc
+        break
+      fi
+      sleep 1
+    done
+
+    if [ -z "$${DISK:-}" ]; then
+      echo "ERROR: Persistent disk not found"
+      exit 1
+    fi
+
+    # Create mount point
+    mkdir -p /mnt/stalwart-data
+
+    # Check if disk is already formatted
+    if ! sudo blkid "$${DISK}" 2>/dev/null; then
+      echo "Formatting persistent disk $${DISK}..."
+      sudo mkfs.ext4 -F "$${DISK}"
+    fi
+
+    # Mount the disk
+    echo "Mounting persistent disk..."
+    sudo mount "$${DISK}" /mnt/stalwart-data
+    sudo chmod 755 /mnt/stalwart-data
+
+    # Add to fstab for persistent mounting
+    if ! grep -q "$${DISK}" /etc/fstab; then
+      echo "$${DISK} /mnt/stalwart-data ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
+    fi
+
     # --- Install Docker ---
     apt-get update -y
     apt-get install -y ca-certificates curl gnupg lsb-release
@@ -48,6 +98,10 @@ locals {
       > /etc/apt/sources.list.d/docker.list
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+    # --- Create Stalwart data directory ---
+    mkdir -p /mnt/stalwart-data/stalwart
+    chmod 755 /mnt/stalwart-data/stalwart
 
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
@@ -64,11 +118,10 @@ services:
       - "993:993"  # IMAPS
       - "8080:8080" # JMAP / management API
     volumes:
-      - stalwart_data:/opt/stalwart-mail
+      # Bind mount to persistent disk (survives VM restart)
+      - /mnt/stalwart-data/stalwart:/opt/stalwart-mail
     environment:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
-volumes:
-  stalwart_data:
 EOF
 
     # --- Start the stack ---
@@ -89,6 +142,12 @@ resource "google_compute_instance" "stalwart" {
       size  = 50
       type  = "pd-balanced"
     }
+  }
+
+  # Attach the persistent disk for Stalwart data
+  attached_disk {
+    source      = google_compute_disk.stalwart_data.id
+    device_name = "stalwart-data"
   }
 
   network_interface {
