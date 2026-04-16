@@ -60,6 +60,19 @@ function getTransporter(): nodemailer.Transporter {
   });
 }
 
+// Wrapper for sendMail with error handling (prevents silent failures)
+async function sendMailWithErrorHandling(
+  mailOptions: Parameters<nodemailer.Transporter["sendMail"]>[0],
+): Promise<void> {
+  try {
+    await getTransporter().sendMail(mailOptions);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`[SendGrid] email delivery failed: ${errorMsg}`);
+    throw new Error(`Email delivery failed: ${errorMsg}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool: send_email
 // ---------------------------------------------------------------------------
@@ -114,7 +127,8 @@ export async function toolSendEmail(
   const useVerifiedSender = fromDomain !== config.domain.toLowerCase();
   const VERIFIED_SENDER = config.sendgrid.verifiedSender;
 
-  await getTransporter().sendMail({
+  // Send via SendGrid — errors are reported to caller (not silent)
+  await sendMailWithErrorHandling({
     from: useVerifiedSender
       ? `"${fromEmail} via Clawmail" <${VERIFIED_SENDER}>`
       : fromEmail,
