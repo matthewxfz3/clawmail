@@ -950,9 +950,9 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
             errBody.innerHTML = '<table><thead><tr><th>Time</th><th>Tool</th><th>Account</th><th>Error</th></tr></thead><tbody>' +
               errEntries.map(function(e) {
                 return '<tr style="background:#fff8f8"><td style="white-space:nowrap;font-size:.78rem;color:#888">' + new Date(e.ts).toLocaleTimeString() + '</td>' +
-                  '<td><code>' + e.tool + '</code></td>' +
-                  '<td style="font-size:.82rem;color:#888">' + (e.account || '\u2014') + '</td>' +
-                  '<td style="color:#dc2626;font-size:.82rem">' + (e.errorMsg || '') + '</td></tr>';
+                  '<td><code>' + escHtml(e.tool) + '</code></td>' +
+                  '<td style="font-size:.82rem;color:#888">' + (e.account ? escHtml(e.account) : '\u2014') + '</td>' +
+                  '<td style="color:#dc2626;font-size:.82rem">' + escHtml(e.errorMsg || '') + '</td></tr>';
               }).join('') + '</tbody></table>';
           }
 
@@ -971,10 +971,10 @@ async function buildMetricsTab(accounts: Array<{ email: string; name: string }>)
                 : e.status === 'denied'
                 ? '<span class="pill" style="background:#ffedd5;color:#9a3412">denied</span>'
                 : '<span class="pill red">error</span>';
-              var errDetail = e.errorMsg ? '<div style="font-size:.75rem;color:#dc2626;margin-top:1px">' + e.errorMsg.slice(0, 120) + '</div>' : '';
+              var errDetail = e.errorMsg ? '<div style="font-size:.75rem;color:#dc2626;margin-top:1px">' + escHtml(e.errorMsg.slice(0, 120)) + '</div>' : '';
               return '<tr><td style="white-space:nowrap;font-size:.78rem;color:#888">' + new Date(e.ts).toLocaleTimeString() + '</td>' +
-                '<td><code>' + e.tool + '</code>' + errDetail + '</td>' +
-                '<td style="font-size:.82rem;color:#888">' + (e.account || '\u2014') + '</td>' +
+                '<td><code>' + escHtml(e.tool) + '</code>' + errDetail + '</td>' +
+                '<td style="font-size:.82rem;color:#888">' + (e.account ? escHtml(e.account) : '\u2014') + '</td>' +
                 '<td class="num" style="font-family:monospace">' + e.durationMs + '</td>' +
                 '<td>' + statusHtml + '</td></tr>';
             }).join('') + '</tbody></table>';
