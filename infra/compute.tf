@@ -123,6 +123,20 @@ EOF
 
     # --- Start the stack ---
     docker compose -f /opt/stalwart/docker-compose.yml up -d
+
+    # --- Verify Stalwart is healthy (startup health check) ---
+    echo "Waiting for Stalwart to be ready..."
+    for i in {1..60}; do
+      if curl -sf http://localhost:8080/.well-known/jmap > /dev/null 2>&1; then
+        echo "✅ Stalwart is ready (health check passed)"
+        exit 0
+      fi
+      echo "  Attempt $i/60: Stalwart not ready yet, retrying..."
+      sleep 2
+    done
+    echo "❌ ERROR: Stalwart startup health check failed after 120 seconds"
+    docker logs stalwart
+    exit 1
   SCRIPT
 }
 
