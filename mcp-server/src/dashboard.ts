@@ -16,11 +16,13 @@ import { buildAuthUrl, exchangeCode, isMeetConfigured, isMeetValid } from "./cli
 import { readSecret, writeSecret } from "./clients/secret-manager.js";
 
 // ---------------------------------------------------------------------------
-// Session cookie — HMAC-SHA256 signed, 7-day expiry
+// Session cookie — HMAC-SHA256 signed, 2-hour expiry (reduced from 7 days)
+// Short TTL limits impact of compromised sessions.
+// Users can re-login quickly if needed.
 // ---------------------------------------------------------------------------
 
 const COOKIE_NAME = "clawmail_dash";
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours (was 7 days)
 
 function effectivePassword(): string {
   return config.dashboard.password || config.stalwart.adminPassword;
