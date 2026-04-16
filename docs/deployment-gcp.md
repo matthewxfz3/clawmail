@@ -199,6 +199,60 @@ gcloud run services update clawmail-mcp \
 
 ---
 
+## Rolling back a bad deploy
+
+Clawmail preserves Docker images with git SHA tags (e.g., `git-4b5e408`). Cloud Run keeps revision history. Rollback is a 30-second traffic switch — no rebuild needed.
+
+### Option A: Switch Cloud Run traffic (fastest)
+
+1. **List recent revisions:**
+   ```bash
+   ./deploy/clawmail.sh versions
+   ```
+   This lists images in Artifact Registry with creation timestamps.
+
+2. **Roll back to a known-good revision:**
+   ```bash
+   ./deploy/clawmail.sh rollback
+   ```
+   The script lists the last 10 Cloud Run revisions. Pick one and enter its name (e.g., `clawmail-mcp-00081-abc`).
+   
+   Traffic switches in ~10 seconds. No downtime, no rebuild.
+
+3. **Verify the rollback:**
+   ```bash
+   ./deploy/clawmail.sh health
+   ```
+
+### Option B: Redeploy a specific git commit
+
+If you need to investigate a past version or re-release it:
+
+```bash
+# Find the commit SHA
+git log --oneline | head -20
+
+# Check out that commit
+git checkout abc123def456
+
+# Redeploy using that commit's SHA
+./deploy/clawmail.sh deploy
+
+# The image will be tagged as git-abc123de and deployed to Cloud Run
+```
+
+### Versioning strategy
+
+- **Images:** Tagged with `git-<short-SHA>` (e.g., `git-4b5e408`) and `:latest`
+- **Git tags:** Use semver for stable releases (e.g., `v1.0.0`, `v1.0.1`) — optional but recommended
+  ```bash
+  git tag -a v1.0.0 -m "First production release"
+  git push origin v1.0.0
+  ```
+- **Terraform:** After each deploy, update `mcp_server_image` in `terraform.tfvars` to pin the image SHA so re-runs are reproducible
+
+---
+
 ## Monitoring
 
 ### Dashboard
