@@ -19,7 +19,12 @@ async function stalwartFetch(
   if (!headers.has("Content-Type") && options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
-  return fetch(url, { ...options, headers });
+  // Use custom HTTPS agent for TLS certificate handling (allows self-signed certs if configured)
+  const fetchOptions: any = { ...options, headers };
+  if (config.stalwart.url.startsWith("https://")) {
+    fetchOptions.dispatcher = config.stalwart.httpsAgent;
+  }
+  return fetch(url, fetchOptions);
 }
 
 async function assertOk(res: Response, context: string): Promise<void> {

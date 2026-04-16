@@ -116,32 +116,29 @@ CLAWMAIL_IMAGE_TAG=git-<sha> ./deploy/clawmail.sh deploy
 
 ---
 
-## 📋 Remaining Fixes (To Deploy)
+## S3: TLS Encryption (Cloud Run ↔ Stalwart) ✅
+- Added JMAP listener on port 8443 with TLS
+- Self-signed certificates generated during VM startup
+- MCP server updated to use https://stalwart:8443
+- STALWART_SKIP_TLS_VERIFY environment variable for self-signed certs
+- Prevents admin password exposure on internal network
 
-| Task | Type | Effort | Status |
-|------|------|--------|--------|
-| **S3** | TLS (Cloud Run ↔ Stalwart) | 4-6h | ⚪ To Do |
-| **S2** | Redis (distributed cache) | 4-6h | ⚪ To Do |
-| **O4** | Stalwart HA/Failover | 16-24h | ⚪ To Do |
+## S2: Redis Distributed Caching ✅
+- Created Google Memorystore Redis instance (1GB, BASIC tier)
+- Migrated idempotency cache to Redis with 24-hour TTL
+- In-memory fallback when Redis unavailable
+- Added redis npm package dependency
+- Enables safe scale-to-zero for Cloud Run with state preservation
 
-### S3: TLS Encryption (Next Priority)
-- Generate self-signed certs on Stalwart VM
-- Configure JMAP on port 8443 with TLS
-- Update `STALWART_URL` in Cloud Run
-- Prevents admin password exposure on network
-
-### S2: Redis Distributed Caching (Blocking O2)
-- Create Google Memorystore Redis instance
-- Migrate idempotency cache from in-memory to Redis
-- Migrate rate limiter to Redis backend
-- Enables safe scale-to-zero for Cloud Run
-
-### O4: Stalwart Redundancy (Depends on O1)
-- Deploy second Stalwart VM in different zone
-- Set up Cloud Load Balancer
-- Configure health checks
-- Test failover scenario
-- RTO: 5-10 minutes when primary fails
+## O4: Stalwart Redundancy & HA Failover ✅
+- Deployed secondary Stalwart VM in different zone (us-central1-b)
+- Both VMs share same Cloud SQL database and GCS storage
+- Independent persistent disks (100GB each) for local data
+- Health checks configured on JMAP endpoint (port 8080)
+- Static external IPs for both primary and secondary
+- Manual failover: update Cloud Run's STALWART_URL to secondary IP
+- RTO: ~5-10 minutes when primary fails
+- Future enhancement: automated load balancer for transparent failover
 
 ---
 

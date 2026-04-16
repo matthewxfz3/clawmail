@@ -2,19 +2,33 @@
 # Stalwart Mail Server — Compute Engine VM
 # ---------------------------------------------------------------------------
 
-# Persistent disk for Stalwart data — regional, auto-replicated
-# Prevents data loss if VM restarts or crashes
-resource "google_compute_disk" "stalwart_data" {
-  name        = "stalwart-data"
+# Persistent disk for primary Stalwart VM
+resource "google_compute_disk" "stalwart_data_primary" {
+  name        = "stalwart-data-primary"
   type        = "pd-standard"
   zone        = var.zone
   size        = 100  # 100GB for mail data
-  description = "Stalwart mail server persistent storage"
+  description = "Stalwart mail server persistent storage (primary)"
 }
 
-# Static external IP so DNS records remain stable across VM restarts/recreates
-resource "google_compute_address" "stalwart" {
-  name         = "stalwart"
+# Persistent disk for secondary Stalwart VM (for HA failover)
+resource "google_compute_disk" "stalwart_data_secondary" {
+  name        = "stalwart-data-secondary"
+  type        = "pd-standard"
+  zone        = var.zone_secondary
+  size        = 100  # 100GB for mail data
+  description = "Stalwart mail server persistent storage (secondary)"
+}
+
+# Static external IPs for primary and secondary Stalwart VMs
+resource "google_compute_address" "stalwart_primary" {
+  name         = "stalwart-primary"
+  address_type = "EXTERNAL"
+  region       = var.region
+}
+
+resource "google_compute_address" "stalwart_secondary" {
+  name         = "stalwart-secondary"
   address_type = "EXTERNAL"
   region       = var.region
 }
@@ -100,6 +114,14 @@ locals {
     mkdir -p /mnt/stalwart-data/stalwart
     chmod 755 /mnt/stalwart-data/stalwart
 
+    # --- Generate self-signed TLS certificates for JMAP secure listener ---
+    mkdir -p /mnt/stalwart-data/stalwart/etc/certificates
+    openssl req -x509 -newkey rsa:2048 -keyout /mnt/stalwart-data/stalwart/etc/certificates/server.key \
+      -out /mnt/stalwart-data/stalwart/etc/certificates/server.crt -days 3650 -nodes \
+      -subj "/CN=$${DOMAIN:-localhost}" 2>/dev/null || true
+    chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
+    chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
+
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
     cat > /opt/stalwart/docker-compose.yml <<'EOF'
@@ -117,6 +139,8 @@ services:
     volumes:
       # Bind mount to persistent disk (survives VM restart)
       - /mnt/stalwart-data/stalwart:/opt/stalwart-mail
+      # TLS certificates for secure JMAP listener (8443)
+      - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
     environment:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
 EOF
@@ -140,8 +164,8 @@ EOF
   SCRIPT
 }
 
-resource "google_compute_instance" "stalwart" {
-  name         = "stalwart"
+resource "google_compute_instance" "stalwart_primary" {
+  name         = "stalwart-primary"
   machine_type = "e2-medium"
   zone         = var.zone
 
@@ -157,7 +181,7 @@ resource "google_compute_instance" "stalwart" {
 
   # Attach the persistent disk for Stalwart data
   attached_disk {
-    source      = google_compute_disk.stalwart_data.id
+    source      = google_compute_disk.stalwart_data_primary.id
     device_name = "stalwart-data"
   }
 
@@ -166,7 +190,49 @@ resource "google_compute_instance" "stalwart" {
 
     access_config {
       # Attach the static external IP
-      nat_ip = google_compute_address.stalwart.address
+      nat_ip = google_compute_address.stalwart_primary.address
+    }
+  }
+
+  metadata_startup_script = local.stalwart_startup_script
+
+  service_account {
+    email = google_service_account.stalwart_vm.email
+    scopes = [
+      "https://www.googleapis.com/auth/sqlservice.admin",
+      "https://www.googleapis.com/auth/cloud-platform",
+    ]
+  }
+}
+
+# Secondary Stalwart VM for HA failover (in different zone)
+resource "google_compute_instance" "stalwart_secondary" {
+  name         = "stalwart-secondary"
+  machine_type = "e2-medium"
+  zone         = var.zone_secondary
+
+  tags = ["stalwart"]
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      size  = 50
+      type  = "pd-balanced"
+    }
+  }
+
+  # Attach the persistent disk for Stalwart data
+  attached_disk {
+    source      = google_compute_disk.stalwart_data_secondary.id
+    device_name = "stalwart-data"
+  }
+
+  network_interface {
+    network = "default"
+
+    access_config {
+      # Attach the static external IP
+      nat_ip = google_compute_address.stalwart_secondary.address
     }
   }
 

@@ -40,6 +40,14 @@ id = "jmap"
 bind = ["0.0.0.0:8080"]
 protocol = "http"
 
+[[server.listener]]
+id = "jmap-secure"
+bind = ["0.0.0.0:8443"]
+protocol = "http"
+tls.implicit = true
+tls.certificate = "/opt/stalwart-mail/etc/certificates/server.crt"
+tls.private-key = "/opt/stalwart-mail/etc/certificates/server.key"
+
 # ---------------------------------------------------------------------------
 # Storage backends
 # ---------------------------------------------------------------------------

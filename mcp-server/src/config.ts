@@ -1,4 +1,5 @@
 import { parseApiKeyMap, type CallerIdentity } from "./auth.js";
+import * as https from "https";
 
 // Compute domain and allowedDomains before config object
 const _domain = process.env.DOMAIN ?? (() => { throw new Error("DOMAIN env var required") })();
@@ -7,13 +8,20 @@ const _extraDomains = (process.env.ALLOWED_DOMAINS ?? "")
   .map(d => d.trim().toLowerCase())
   .filter(Boolean);
 
+// TLS configuration for Stalwart connections (for self-signed certs in dev/staging)
+const _skipTlsVerify = (process.env.STALWART_SKIP_TLS_VERIFY ?? "").toLowerCase() === "true";
+const _httpsAgent = _skipTlsVerify
+  ? new https.Agent({ rejectUnauthorized: false })
+  : new https.Agent({ rejectUnauthorized: true });
+
 export const config = {
   domain: _domain,
   allowedDomains: [...new Set([_domain.toLowerCase(), ..._extraDomains])],
   stalwart: {
-    url: process.env.STALWART_URL ?? "http://localhost:8080",
+    url: process.env.STALWART_URL ?? "https://localhost:8443",
     adminUser: process.env.STALWART_ADMIN_USER ?? "admin",
     adminPassword: process.env.STALWART_ADMIN_PASSWORD ?? (() => { throw new Error("STALWART_ADMIN_PASSWORD env var required") })(),
+    httpsAgent: _httpsAgent,
   },
   sendgrid: {
     apiKey: process.env.SENDGRID_API_KEY ?? (() => { throw new Error("SENDGRID_API_KEY env var required") })(),
