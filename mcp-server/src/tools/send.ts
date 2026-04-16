@@ -42,24 +42,22 @@ function validateAddressList(addresses: string[], fieldName: string): void {
 const MAX_BODY_BYTES = 1_048_576; // 1 MiB
 
 // ---------------------------------------------------------------------------
-// Reusable SMTP transporter (SendGrid relay)
+// SMTP transporter (SendGrid relay) — fresh creation on each call
+// Enables runtime API key rotation without restart
 // ---------------------------------------------------------------------------
 
-let _transporter: nodemailer.Transporter | undefined;
-
 function getTransporter(): nodemailer.Transporter {
-  if (_transporter === undefined) {
-    _transporter = nodemailer.createTransport({
-      host: "smtp.sendgrid.net",
-      port: 587,
-      secure: false,
-      auth: {
-        user: "apikey",
-        pass: config.sendgrid.apiKey,
-      },
-    });
-  }
-  return _transporter;
+  // Create fresh transporter each time to read latest API key from config
+  // This allows rotating SendGrid keys in Secret Manager without restart
+  return nodemailer.createTransport({
+    host: "smtp.sendgrid.net",
+    port: 587,
+    secure: false,
+    auth: {
+      user: "apikey",
+      pass: config.sendgrid.apiKey,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
