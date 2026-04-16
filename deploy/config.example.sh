@@ -55,3 +55,11 @@ export CLAWMAIL_SENDGRID_API_KEY="SG.your-sendgrid-api-key"
 # Example: openssl rand -hex 32
 # -----------------------------------------------------------------------------
 export CLAWMAIL_MCP_API_KEYS="changeme-key-1,changeme-key-2"
+
+# (Optional) Docker image tag override
+# By default, images are tagged with git-<short-SHA> for versioning.
+# To deploy a specific tag, set this before running deploy:
+#   CLAWMAIL_IMAGE_TAG=git-4b5e408 ./deploy/clawmail.sh deploy
+#   CLAWMAIL_IMAGE_TAG=latest ./deploy/clawmail.sh deploy
+# Leaving this unset (recommended) ensures each deploy is versioned to its commit.
+# export CLAWMAIL_IMAGE_TAG="git-4b5e408"

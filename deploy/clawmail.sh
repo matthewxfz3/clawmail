@@ -92,8 +92,19 @@ load_config() {
   # Derived values
   TF_STATE_BUCKET="${CLAWMAIL_TF_STATE_BUCKET:-clawmail-tfstate-${CLAWMAIL_GCP_PROJECT}}"
   IMAGE_REPO="${CLAWMAIL_GCP_REGION}-docker.pkg.dev/${CLAWMAIL_GCP_PROJECT}/clawmail/mcp-server"
-  IMAGE_TAG="${CLAWMAIL_IMAGE_TAG:-latest}"
-  IMAGE_URL="${IMAGE_REPO}:${IMAGE_TAG}"
+
+  # Git SHA for versioning (if not in a git repo, use "local")
+  if git rev-parse --git-dir &>/dev/null; then
+    GIT_SHA="$(git rev-parse --short HEAD)"
+  else
+    GIT_SHA="local"
+  fi
+
+  # Image tag: use override or auto-generate from git SHA
+  IMAGE_TAG="${CLAWMAIL_IMAGE_TAG:-git-${GIT_SHA}}"
+  IMAGE_URL_SHA="${IMAGE_REPO}:${IMAGE_TAG}"
+  IMAGE_URL_LATEST="${IMAGE_REPO}:latest"
+
   VM_NAME="stalwart"
   CLOUD_RUN_SERVICE="clawmail-mcp"
 }
@@ -154,7 +165,7 @@ tf_vars() {
     "-var=db_password=${CLAWMAIL_DB_PASSWORD}" \
     "-var=sendgrid_api_key=${CLAWMAIL_SENDGRID_API_KEY}" \
     "-var=mcp_api_key=${CLAWMAIL_MCP_API_KEYS}" \
-    "-var=mcp_server_image=${IMAGE_URL}"
+    "-var=mcp_server_image=${IMAGE_URL_SHA}"
 }
 
 tf_init() {
@@ -222,15 +233,17 @@ cmd_deploy() {
   log "Configuring Docker for Artifact Registry..."
   gcloud auth configure-docker "${CLAWMAIL_GCP_REGION}-docker.pkg.dev" --quiet
 
-  log "Building MCP server image: $IMAGE_URL"
-  docker build \
+  log "Building and pushing MCP server image with both tags..."
+  docker buildx build \
     --platform linux/amd64 \
-    -t "$IMAGE_URL" \
+    -t "$IMAGE_URL_SHA" \
+    -t "$IMAGE_URL_LATEST" \
+    --push \
     "$MCP_DIR"
 
-  log "Pushing image to Artifact Registry..."
-  docker push "$IMAGE_URL"
-  success "Image pushed: $IMAGE_URL"
+  success "Image pushed:"
+  success "  SHA tag (pinned): $IMAGE_URL_SHA"
+  success "  Latest tag: $IMAGE_URL_LATEST"
 
   header "Phase 3 — Deploy Cloud Run MCP service"
   # Second pass: Cloud Run now has the image
@@ -530,6 +543,73 @@ cmd_stop() {
 }
 
 # ---------------------------------------------------------------------------
+# Rollback command
+# ---------------------------------------------------------------------------
+cmd_rollback() {
+  load_config
+  header "Rolling back to a previous Cloud Run revision"
+
+  echo ""
+  log "Recent Cloud Run revisions:"
+  echo ""
+
+  # List revisions with timestamps and images
+  gcloud run revisions list \
+    --service "$CLOUD_RUN_SERVICE" \
+    --region "$CLAWMAIL_GCP_REGION" \
+    --project "$CLAWMAIL_GCP_PROJECT" \
+    --format="table(name,status.conditions[0].lastTransitionTime,spec.containers[0].image)" \
+    --limit 10
+
+  echo ""
+  read -rp "Enter revision name to roll back to (e.g. clawmail-mcp-00081-abc): " REVISION
+
+  if [[ -z "$REVISION" ]]; then
+    error "No revision specified."
+    exit 1
+  fi
+
+  log "Switching all traffic to revision: $REVISION"
+  if gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+    --region "$CLAWMAIL_GCP_REGION" \
+    --project "$CLAWMAIL_GCP_PROJECT" \
+    --to-revisions "$REVISION=100" \
+    --quiet; then
+    success "Traffic switched to $REVISION"
+    echo ""
+    echo -e "  ${CYAN}MCP endpoint will start serving the rolled-back revision.${NC}"
+    echo "  Propagation should take 10-30 seconds."
+  else
+    error "Failed to switch traffic to $REVISION"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Versions command
+# ---------------------------------------------------------------------------
+cmd_versions() {
+  load_config
+  header "Recent MCP server images in Artifact Registry"
+
+  echo ""
+  log "Listing recent docker images:"
+  echo ""
+
+  gcloud artifacts docker images list \
+    "${CLAWMAIL_GCP_REGION}-docker.pkg.dev/${CLAWMAIL_GCP_PROJECT}/clawmail/mcp-server" \
+    --include-tags \
+    --limit 20 \
+    --format="table(version,tags,createTime)"
+
+  echo ""
+  log "To redeploy a specific version:"
+  echo "  git checkout <commit-sha>"
+  echo "  CLAWMAIL_IMAGE_TAG=git-<sha> ./deploy/clawmail.sh deploy"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 cmd_help() {
@@ -543,10 +623,17 @@ cmd_help() {
   echo "  deploy   Full deployment — provisions GCP infrastructure, builds and"
   echo "           pushes the MCP server Docker image, configures Stalwart on VM."
   echo "           Safe to re-run (Terraform is idempotent)."
+  echo "           Images are tagged with git-<SHA> + :latest for versioning."
   echo ""
   echo "  health   Checks all system components and prints a status table:"
   echo "           VM, Stalwart health endpoint, Cloud Run, Cloud SQL,"
   echo "           GCS bucket, DNS MX/SPF records."
+  echo ""
+  echo "  versions Lists recent MCP server images in Artifact Registry"
+  echo "           with tags and creation timestamps."
+  echo ""
+  echo "  rollback Switches Cloud Run traffic to a previous revision."
+  echo "           Fast recovery (no rebuild needed, ~30 seconds)."
   echo ""
   echo "  stop     Gracefully stops Cloud Run (scale → 0) and the Stalwart VM."
   echo "           Data in Cloud SQL and GCS is preserved."
@@ -557,6 +644,9 @@ cmd_help() {
   echo "  cp deploy/config.example.sh deploy/config.sh"
   echo "  # fill in GCP project, domain, passwords, API keys"
   echo "  ./deploy/clawmail.sh deploy"
+  echo ""
+  echo -e "${BOLD}Override image tag:${NC}"
+  echo "  CLAWMAIL_IMAGE_TAG=git-abc1234 ./deploy/clawmail.sh deploy"
   echo ""
   echo -e "${BOLD}Override config path:${NC}"
   echo "  CLAWMAIL_CONFIG=/path/to/config.sh ./deploy/clawmail.sh deploy"
@@ -572,9 +662,11 @@ cmd_help() {
 # Main
 # ---------------------------------------------------------------------------
 case "${1:-help}" in
-  deploy)  cmd_deploy  ;;
-  health)  cmd_health  ;;
-  stop)    cmd_stop    ;;
+  deploy)   cmd_deploy  ;;
+  health)   cmd_health  ;;
+  rollback) cmd_rollback ;;
+  versions) cmd_versions ;;
+  stop)     cmd_stop    ;;
   help|--help|-h) cmd_help ;;
   *)
     error "Unknown command: ${1}"
