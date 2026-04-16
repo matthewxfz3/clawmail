@@ -26,6 +26,11 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
         value = "http://${google_compute_address.stalwart.address}:8080"
       }
 
+      env {
+        name  = "ALLOWED_DOMAINS"
+        value = var.allowed_domains
+      }
+
       # Secret-backed environment variables
       env {
         name = "STALWART_ADMIN_PASSWORD"

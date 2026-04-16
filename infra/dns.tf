@@ -85,3 +85,88 @@ resource "google_dns_record_set" "dmarc" {
 #
 # or simply manage it outside Terraform if you prefer.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Additional domains from ALLOWED_DOMAINS variable
+# ---------------------------------------------------------------------------
+# The following resources are conditionally created for each additional domain.
+# Currently configured for: fridayx.me
+#
+# To add more domains, update the allowed_domains Terraform variable with a
+# comma-separated list (e.g., "fridayx.me,another-domain.com").
+# ---------------------------------------------------------------------------
+
+# Managed zone for fridayx.me
+resource "google_dns_managed_zone" "secondary" {
+  count       = var.allowed_domains != "" ? 1 : 0
+  name        = "fridayx-me"
+  dns_name    = "fridayx.me."
+  description = "Public DNS zone for secondary mail domain (fridayx.me)"
+  visibility  = "public"
+}
+
+# A record: stalwart.fridayx.me → same static IP as primary domain
+resource "google_dns_record_set" "secondary_stalwart_a" {
+  count        = var.allowed_domains != "" ? 1 : 0
+  name         = "stalwart.fridayx.me."
+  managed_zone = google_dns_managed_zone.secondary[0].name
+  type         = "A"
+  ttl          = 300
+
+  rrdatas = [google_compute_address.stalwart.address]
+}
+
+# MX record: fridayx.me → stalwart.fridayx.me (priority 10)
+resource "google_dns_record_set" "secondary_mx" {
+  count        = var.allowed_domains != "" ? 1 : 0
+  name         = "fridayx.me."
+  managed_zone = google_dns_managed_zone.secondary[0].name
+  type         = "MX"
+  ttl          = 300
+
+  rrdatas = ["10 stalwart.fridayx.me."]
+}
+
+# SPF TXT record for fridayx.me
+# Authorises Mailgun relays and the Stalwart static IP as sending sources.
+# ~all = softfail for unrecognised senders (adjust to -all once confident).
+resource "google_dns_record_set" "secondary_spf" {
+  count        = var.allowed_domains != "" ? 1 : 0
+  name         = "fridayx.me."
+  managed_zone = google_dns_managed_zone.secondary[0].name
+  type         = "TXT"
+  ttl          = 300
+
+  rrdatas = [
+    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart.address} ~all\""
+  ]
+}
+
+# DMARC TXT record for fridayx.me
+# Policy: quarantine. Aggregate reports sent to dmarc@fridayx.me.
+resource "google_dns_record_set" "secondary_dmarc" {
+  count        = var.allowed_domains != "" ? 1 : 0
+  name         = "_dmarc.fridayx.me."
+  managed_zone = google_dns_managed_zone.secondary[0].name
+  type         = "TXT"
+  ttl          = 300
+
+  rrdatas = [
+    "\"v=DMARC1; p=quarantine; rua=mailto:dmarc@fridayx.me\""
+  ]
+}
+
+# DKIM TXT record for fridayx.me — MUST be added manually.
+#
+# Stalwart generates DKIM public keys per domain. Retrieve the key for fridayx.me
+# via the Stalwart admin interface, then create a record of the form:
+#
+#   Name:  <selector>._domainkey.fridayx.me.
+#   Type:  TXT
+#   Value: "v=DKIM1; k=rsa; p=<base64-public-key>"
+#
+# You can then import it into this state with:
+#   terraform import google_dns_record_set.secondary_dkim \
+#     "fridayx-me/<selector>._domainkey.fridayx.me./TXT"
+#
+# or simply manage it outside Terraform if you prefer.

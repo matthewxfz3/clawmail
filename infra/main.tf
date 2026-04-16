@@ -46,6 +46,12 @@ variable "domain" {
   type        = string
 }
 
+variable "allowed_domains" {
+  description = "Optional comma-separated list of additional mail domains (besides the primary domain)"
+  type        = string
+  default     = ""
+}
+
 variable "sendgrid_api_key" {
   description = "Twilio SendGrid API key used as SMTP password (username is always 'apikey')"
   type        = string
