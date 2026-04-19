@@ -101,6 +101,12 @@ locals {
     fi
 
     # --- Install Docker and gcloud CLI ---
+    # Fix any interrupted dpkg state
+    if [ -f /var/lib/apt/lists/lock ]; then
+      sudo rm -f /var/lib/apt/lists/lock
+    fi
+    sudo dpkg --configure -a 2>/dev/null || true
+
     apt-get update -y
     apt-get install -y ca-certificates curl gnupg lsb-release
     install -m 0755 -d /etc/apt/keyrings
