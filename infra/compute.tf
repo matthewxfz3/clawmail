@@ -110,6 +110,8 @@ locals {
     apt-get update -y
     apt-get install -y ca-certificates curl gnupg lsb-release
     install -m 0755 -d /etc/apt/keyrings
+    # Remove old Docker GPG key if it exists to avoid conflicts
+    rm -f /etc/apt/keyrings/docker.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
       | gpg --no-tty --batch --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
