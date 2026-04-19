@@ -178,14 +178,22 @@ CONFIG_EOF
 
     # Get an OAuth token for Secret Manager API access
     OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
-      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=secretmanager.googleapis.com&format=full")
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+    if [ -z "$OAUTH_TOKEN" ]; then
+      echo "ERROR: Could not retrieve OAuth token from metadata server"
+      exit 1
+    fi
 
     # Fetch the secret using the Secret Manager API
-    ADMIN_PASSWORD=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
-      -H "Authorization: Bearer $OAUTH_TOKEN" | grep -o '"payload":{"data":"[^"]*"' | cut -d'"' -f8 | base64 -d 2>/dev/null || echo "")
+    SECRET_RESPONSE=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
+      -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
+
+    ADMIN_PASSWORD=$(echo "$SECRET_RESPONSE" | grep -o '"data":"[^"]*"' | cut -d'"' -f4 | base64 -d 2>/dev/null || echo "")
 
     if [ -z "$ADMIN_PASSWORD" ]; then
       echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
+      echo "Response: $SECRET_RESPONSE"
       exit 1
     fi
     export ADMIN_PASSWORD
