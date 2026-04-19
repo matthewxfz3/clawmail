@@ -120,11 +120,6 @@ locals {
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-    # Install gcloud CLI for Secret Manager access
-    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
-    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
-    apt-get update -y && apt-get install -y google-cloud-sdk
-
     # --- Create Stalwart data directory ---
     mkdir -p /mnt/stalwart-data/stalwart
     chmod 755 /mnt/stalwart-data/stalwart
@@ -177,7 +172,16 @@ CONFIG_EOF
 
     # --- Retrieve admin password from Secret Manager ---
     GCP_PROJECT_ID=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id)
-    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret="stalwart-admin-password" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+    GCP_PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id)
+
+    # Get an OAuth token for Secret Manager API access
+    OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=secretmanager.googleapis.com&format=full")
+
+    # Fetch the secret using the Secret Manager API
+    ADMIN_PASSWORD=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
+      -H "Authorization: Bearer $OAUTH_TOKEN" | grep -o '"payload":{"data":"[^"]*"' | cut -d'"' -f8 | base64 -d 2>/dev/null || echo "")
+
     if [ -z "$ADMIN_PASSWORD" ]; then
       echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
       exit 1
