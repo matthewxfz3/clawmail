@@ -86,10 +86,14 @@ locals {
       sudo mkfs.ext4 -F "$${DISK}"
     fi
 
-    # Mount the disk
+    # Mount the disk (skip if already mounted)
     echo "Mounting persistent disk..."
-    sudo mount "$${DISK}" /mnt/stalwart-data
-    sudo chmod 755 /mnt/stalwart-data
+    if ! mountpoint -q /mnt/stalwart-data; then
+      sudo mount "$${DISK}" /mnt/stalwart-data
+      sudo chmod 755 /mnt/stalwart-data
+    else
+      echo "Persistent disk already mounted at /mnt/stalwart-data"
+    fi
 
     # Add to fstab for persistent mounting
     if ! grep -q "$${DISK}" /etc/fstab; then
@@ -161,7 +165,7 @@ type = "internal"
 
 [authentication.fallback-admin]
 user = "admin"
-secret = "%{env:STALWART_ADMIN_SECRET}%"
+secret = "%%{env:STALWART_ADMIN_SECRET}%%"
 CONFIG_EOF
     chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
 
@@ -201,6 +205,13 @@ EOF
 
     # --- Start the stack with retries ---
     echo "Attempting to start Stalwart container..."
+
+    # Remove old container if it exists
+    if docker ps -a --format '{{.Names}}' | grep -q '^stalwart$'; then
+      echo "Removing old Stalwart container..."
+      docker compose -f /opt/stalwart/docker-compose.yml down 2>/dev/null || docker rm -f stalwart 2>/dev/null || true
+    fi
+
     MAX_RETRIES=5
     RETRY=0
     while [ $RETRY -lt $MAX_RETRIES ]; do
