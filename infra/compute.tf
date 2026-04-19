@@ -96,7 +96,7 @@ locals {
       echo "$${DISK} /mnt/stalwart-data ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
     fi
 
-    # --- Install Docker ---
+    # --- Install Docker and gcloud CLI ---
     apt-get update -y
     apt-get install -y ca-certificates curl gnupg lsb-release
     install -m 0755 -d /etc/apt/keyrings
@@ -110,6 +110,11 @@ locals {
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
+    # Install gcloud CLI for Secret Manager access
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+    apt-get update -y && apt-get install -y google-cloud-sdk
+
     # --- Create Stalwart data directory ---
     mkdir -p /mnt/stalwart-data/stalwart
     chmod 755 /mnt/stalwart-data/stalwart
@@ -122,8 +127,52 @@ locals {
     chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
     chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
 
-    # Note: Not providing custom config; Stalwart uses embedded default configuration
-    # The default config includes listeners for both HTTP (8080) and HTTPS (8443)
+    # --- Create Stalwart config with both HTTP and HTTPS listeners ---
+    mkdir -p /mnt/stalwart-data/stalwart/etc
+    cat > /mnt/stalwart-data/stalwart/etc/config.toml <<'CONFIG_EOF'
+[server]
+hostname = "fridaymailer.com"
+
+[[server.listener]]
+id = "smtp"
+bind = ["0.0.0.0:25"]
+protocol = "smtp"
+
+[[server.listener]]
+id = "imap"
+bind = ["0.0.0.0:143"]
+protocol = "imap"
+
+[[server.listener]]
+id = "jmap"
+bind = ["0.0.0.0:8080"]
+protocol = "http"
+
+[[server.listener]]
+id = "jmap-secure"
+bind = ["0.0.0.0:8443"]
+protocol = "http"
+tls.implicit = true
+tls.certificate = "/opt/stalwart-mail/etc/certificates/server.crt"
+tls.private-key = "/opt/stalwart-mail/etc/certificates/server.key"
+
+[directory."internal"]
+type = "internal"
+
+[authentication.fallback-admin]
+user = "admin"
+secret = "%{env:STALWART_ADMIN_SECRET}%"
+CONFIG_EOF
+    chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
+
+    # --- Retrieve admin password from Secret Manager ---
+    GCP_PROJECT_ID=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id)
+    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret="stalwart-admin-password" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+    if [ -z "$ADMIN_PASSWORD" ]; then
+      echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
+      exit 1
+    fi
+    export ADMIN_PASSWORD
 
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
@@ -146,7 +195,8 @@ services:
       # TLS certificates for secure JMAP listener (8443)
       - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
     environment:
-      - STALWART_ADMIN_SECRET=$${ADMIN_PASSWORD}
+      - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
+      - STALWART_ADMIN_SECRET=$ADMIN_PASSWORD
 EOF
 
     # --- Start the stack with retries ---
@@ -180,7 +230,13 @@ EOF
     echo "Waiting for Stalwart to be ready..."
     for i in {1..60}; do
       if curl -sf http://localhost:8080/.well-known/jmap > /dev/null 2>&1; then
-        echo "✅ Stalwart is ready (health check passed)"
+        echo "✅ Stalwart is ready (health check passed on port 8080)"
+        # Also test HTTPS listener
+        if curl -sk https://localhost:8443/.well-known/jmap > /dev/null 2>&1; then
+          echo "✅ HTTPS listener on 8443 is working"
+        else
+          echo "⚠️  HTTPS listener on 8443 not responding (may still be initializing)"
+        fi
         exit 0
       fi
       echo "  Attempt $i/60: Stalwart not ready yet, retrying..."
