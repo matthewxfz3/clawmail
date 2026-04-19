@@ -189,7 +189,10 @@ CONFIG_EOF
     SECRET_RESPONSE=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
       -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
 
-    ADMIN_PASSWORD=$(echo "$SECRET_RESPONSE" | grep -o '"data":"[^"]*"' | cut -d'"' -f4 | base64 -d 2>/dev/null || echo "")
+    # Extract the base64-encoded password from the JSON response
+    # Use grep to find the line with "data" and extract the value
+    BASE64_PASSWORD=$(echo "$SECRET_RESPONSE" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/')
+    ADMIN_PASSWORD=$(echo "$BASE64_PASSWORD" | base64 -d 2>/dev/null || echo "")
 
     if [ -z "$ADMIN_PASSWORD" ]; then
       echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
