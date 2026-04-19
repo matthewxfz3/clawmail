@@ -135,7 +135,8 @@ services:
       - "25:25"    # SMTP
       - "143:143"  # IMAP
       - "993:993"  # IMAPS
-      - "8080:8080" # JMAP / management API
+      - "8080:8080"   # JMAP / management API (HTTP)
+      - "8443:8443"   # JMAP / management API (HTTPS)
     volumes:
       # Bind mount to persistent disk (survives VM restart)
       - /mnt/stalwart-data/stalwart:/opt/stalwart-mail
