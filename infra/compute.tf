@@ -128,7 +128,7 @@ locals {
 version: "3.9"
 services:
   stalwart:
-    image: stalwartlabs/mail-server:latest
+    image: stalwartlabs/stalwart:latest
     container_name: stalwart
     restart: unless-stopped
     ports:
@@ -146,8 +146,32 @@ services:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
 EOF
 
-    # --- Start the stack ---
-    docker compose -f /opt/stalwart/docker-compose.yml up -d
+    # --- Start the stack with retries ---
+    echo "Attempting to start Stalwart container..."
+    MAX_RETRIES=5
+    RETRY=0
+    while [ $RETRY -lt $MAX_RETRIES ]; do
+      echo "Start attempt $((RETRY + 1))/$MAX_RETRIES..."
+      if docker compose -f /opt/stalwart/docker-compose.yml up -d; then
+        echo "✅ docker compose up succeeded"
+        break
+      else
+        RETRY=$((RETRY + 1))
+        if [ $RETRY -lt $MAX_RETRIES ]; then
+          echo "⚠️  docker compose up failed, retrying in 10 seconds..."
+          sleep 10
+        fi
+      fi
+    done
+
+    if [ $RETRY -eq $MAX_RETRIES ]; then
+      echo "❌ ERROR: Failed to start Stalwart after $MAX_RETRIES attempts"
+      echo "Docker compose logs:"
+      docker logs stalwart 2>&1 || echo "No container logs available"
+      echo "Docker daemon logs:"
+      journalctl -u docker -n 50 --no-pager 2>&1 || echo "Could not retrieve Docker logs"
+      exit 1
+    fi
 
     # --- Verify Stalwart is healthy (startup health check) ---
     echo "Waiting for Stalwart to be ready..."
@@ -160,7 +184,10 @@ EOF
       sleep 2
     done
     echo "❌ ERROR: Stalwart startup health check failed after 120 seconds"
-    docker logs stalwart
+    echo "Docker compose logs:"
+    docker logs stalwart 2>&1
+    echo "Docker daemon status:"
+    systemctl status docker 2>&1 || true
     exit 1
   SCRIPT
 }
