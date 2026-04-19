@@ -122,6 +122,9 @@ locals {
     chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
     chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
 
+    # Note: Not providing custom config; Stalwart uses embedded default configuration
+    # The default config includes listeners for both HTTP (8080) and HTTPS (8443)
+
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
     cat > /opt/stalwart/docker-compose.yml <<'EOF'
@@ -143,7 +146,7 @@ services:
       # TLS certificates for secure JMAP listener (8443)
       - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
     environment:
-      - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
+      - STALWART_ADMIN_SECRET=$${ADMIN_PASSWORD}
 EOF
 
     # --- Start the stack with retries ---
