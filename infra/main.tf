@@ -101,3 +101,9 @@ variable "mcp_server_image" {
   type        = string
   default     = "gcr.io/PROJECT/clawmail-mcp:latest"
 }
+
+variable "stalwart_image_tag" {
+  description = "Stalwart Docker image tag. Pin to a specific release (e.g. 'v0.11.3') to prevent uncontrolled upgrades on VM restart. See https://github.com/stalwartlabs/mail-server/releases"
+  type        = string
+  default     = "latest"
+}

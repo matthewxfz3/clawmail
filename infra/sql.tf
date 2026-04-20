@@ -11,8 +11,7 @@ resource "google_sql_database_instance" "clawmail" {
   database_version = "POSTGRES_15"
   region           = var.region
 
-  # Set to true before going to production to prevent accidental deletion
-  deletion_protection = false
+  deletion_protection = true
 
   settings {
     # Use db-f1-micro for dev; switch to db-g1-small (or larger) for production

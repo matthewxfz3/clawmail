@@ -48,7 +48,7 @@ resource "google_dns_record_set" "spf" {
   ttl          = 300
 
   rrdatas = [
-    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart_primary.address} ~all\""
+    "\"v=spf1 include:sendgrid.net ip4:${google_compute_address.stalwart_primary.address} ~all\""
   ]
 }
 
@@ -138,7 +138,7 @@ resource "google_dns_record_set" "secondary_spf" {
   ttl          = 300
 
   rrdatas = [
-    "\"v=spf1 include:mailgun.org ip4:${google_compute_address.stalwart_primary.address} ~all\""
+    "\"v=spf1 include:sendgrid.net ip4:${google_compute_address.stalwart_primary.address} ~all\""
   ]
 }
 

@@ -5,13 +5,15 @@
 # Redis instance for distributed idempotency cache and rate limiting
 # Enables Cloud Run to scale safely to zero without losing request state
 resource "google_redis_instance" "clawmail_cache" {
+  depends_on = [google_project_service.redis]
+
   name           = "clawmail-cache"
   memory_size_gb = 1 # 1 GB sufficient for caches; upgrade if needed
   tier           = "BASIC"
   region         = var.region
 
   # Redis 7.x for better performance and newer features
-  redis_version = "7.0"
+  redis_version = "7.2"
 
   # Allow connections from Cloud Run and Stalwart VM via VPC
   authorized_network = "default"

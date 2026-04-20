@@ -1,4 +1,24 @@
 # ---------------------------------------------------------------------------
+# Serverless VPC Access connector — lets Cloud Run reach VPC-internal
+# resources (Redis, Stalwart VM) without exposing them publicly.
+# ---------------------------------------------------------------------------
+
+resource "google_project_service" "vpcaccess" {
+  service            = "vpcaccess.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_vpc_access_connector" "clawmail" {
+  depends_on = [google_project_service.vpcaccess]
+  name       = "clawmail-connector"
+  region     = var.region
+  network    = "default"
+  # /28 must not overlap with existing VPC subnets.
+  # Pick a CIDR that doesn't overlap your VPC subnets in this project/region.
+  ip_cidr_range = "10.8.0.0/28"
+}
+
+# ---------------------------------------------------------------------------
 # Cloud Run v2 — Clawmail MCP server
 # ---------------------------------------------------------------------------
 
@@ -22,13 +42,10 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
       }
 
       env {
-        name  = "STALWART_URL"
-        value = "https://${google_compute_address.stalwart_primary.address}:8443"
-      }
-
-      env {
-        name  = "STALWART_SKIP_TLS_VERIFY"
-        value = "true"
+        name = "STALWART_URL"
+        # Use internal IP via VPC connector — plain HTTP is fine on a trusted VPC.
+        # This avoids exposing port 8443 publicly and removes the TLS skip flag.
+        value = "http://${google_compute_instance.stalwart_primary.network_interface[0].network_ip}:8080"
       }
 
       env {
@@ -97,6 +114,11 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
       }
     }
 
+    vpc_access {
+      connector = google_vpc_access_connector.clawmail.id
+      egress    = "PRIVATE_RANGES_ONLY"
+    }
+
     # Grant the revision access to the secrets it references
     service_account = google_service_account.clawmail_mcp_run.email
   }
@@ -108,11 +130,13 @@ resource "google_service_account" "clawmail_mcp_run" {
   display_name = "Clawmail MCP Cloud Run SA"
 }
 
-# Allow Cloud Run SA to access Secret Manager secrets
-resource "google_project_iam_member" "clawmail_mcp_secretmanager" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.clawmail_mcp_run.email}"
+# Allow Cloud Run SA to access only the specific secrets it needs (least privilege)
+resource "google_secret_manager_secret_iam_member" "clawmail_mcp_run_secrets" {
+  for_each  = toset(["stalwart-admin-password", "sendgrid-api-key", "mcp-api-key", "mcp-api-key-map", "dashboard-password"])
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.secrets[each.key].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.clawmail_mcp_run.email}"
 }
 
 # ---------------------------------------------------------------------------

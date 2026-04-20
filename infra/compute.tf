@@ -7,7 +7,7 @@ resource "google_compute_disk" "stalwart_data_primary" {
   name        = "stalwart-data-primary"
   type        = "pd-standard"
   zone        = var.zone
-  size        = 100  # 100GB for mail data
+  size        = 100 # 100GB for mail data
   description = "Stalwart mail server persistent storage (primary)"
 }
 
@@ -16,7 +16,7 @@ resource "google_compute_disk" "stalwart_data_secondary" {
   name        = "stalwart-data-secondary"
   type        = "pd-standard"
   zone        = var.zone_secondary
-  size        = 100  # 100GB for mail data
+  size        = 100 # 100GB for mail data
   description = "Stalwart mail server persistent storage (secondary)"
 }
 
@@ -46,11 +46,13 @@ resource "google_project_iam_member" "stalwart_vm_cloudsql" {
   member  = "serviceAccount:${google_service_account.stalwart_vm.email}"
 }
 
-# Allow the VM's SA to read secrets from Secret Manager
-resource "google_project_iam_member" "stalwart_vm_secretmanager" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.stalwart_vm.email}"
+# Allow the VM's SA to read only the specific secrets it needs (least privilege)
+resource "google_secret_manager_secret_iam_member" "stalwart_vm_secrets" {
+  for_each  = toset(["stalwart-admin-password", "db-password"])
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.secrets[each.key].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.stalwart_vm.email}"
 }
 
 # Startup script: install Docker + Compose, write docker-compose.yml, start stack
@@ -58,6 +60,8 @@ locals {
   stalwart_startup_script = <<-SCRIPT
     #!/bin/bash
     set -euo pipefail
+
+    DOMAIN="${var.domain}"
 
     # --- Format and mount persistent disk ---
     # Wait for disk to appear (sdb or sdc depending on device order)
@@ -96,8 +100,9 @@ locals {
     fi
 
     # Add to fstab for persistent mounting
-    if ! grep -q "$${DISK}" /etc/fstab; then
-      echo "$${DISK} /mnt/stalwart-data ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
+    DISK_UUID=$(blkid -s UUID -o value "$${DISK}")
+    if ! grep -q "$${DISK_UUID}" /etc/fstab; then
+      echo "UUID=$${DISK_UUID} /mnt/stalwart-data ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
     fi
 
     # --- Install Docker and gcloud CLI ---
@@ -126,6 +131,10 @@ locals {
     mkdir -p /mnt/stalwart-data/stalwart
     chmod 755 /mnt/stalwart-data/stalwart
 
+    # Blob store directory (filesystem backend)
+    mkdir -p /mnt/stalwart-data/stalwart/blobs
+    chmod 755 /mnt/stalwart-data/stalwart/blobs
+
     # --- Generate self-signed TLS certificates for JMAP secure listener ---
     mkdir -p /mnt/stalwart-data/stalwart/etc/certificates
     openssl req -x509 -newkey rsa:2048 -keyout /mnt/stalwart-data/stalwart/etc/certificates/server.key \
@@ -134,12 +143,13 @@ locals {
     chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
     chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
 
-    # --- Create Stalwart config ---
+    # --- Create Stalwart config (first boot only) ---
+    # Do NOT overwrite on every reboot; preserve any admin/UI changes.
     mkdir -p /mnt/stalwart-data/stalwart/etc
-    rm -f /mnt/stalwart-data/stalwart/etc/config.toml
-    cat > /mnt/stalwart-data/stalwart/etc/config.toml <<'CONFIG_EOF'
+    if [ ! -f /mnt/stalwart-data/stalwart/etc/config.toml ]; then
+      cat > /mnt/stalwart-data/stalwart/etc/config.toml <<CONFIG_EOF
 [server]
-hostname = "fridaymailer.com"
+hostname = "$${DOMAIN}"
 
 [[server.listener]]
 id = "smtp"
@@ -167,38 +177,86 @@ tls.private-key = "/opt/stalwart-mail/etc/certificates/server.key"
 [directory."internal"]
 type = "internal"
 
+[storage]
+data = "postgresql"
+blob = "filesystem"
+
+[store."postgresql"]
+type = "postgresql"
+host = "10.64.0.3"
+port = 5432
+database = "stalwart"
+user = "stalwart"
+password = "745a401b85de13dd4782c5dc919cb61716dbbc90"
+timeout = "15s"
+
+[store."postgresql".tls]
+enable = false
+allow-invalid-certs = false
+
+[store."postgresql".pool]
+max-connections = 10
+
+[store."filesystem"]
+type = "fs"
+path = "/opt/stalwart-mail/blobs"
+depth = 2
+
 [authentication.fallback-admin]
 user = "admin"
-secret = "%%{env:STALWART_ADMIN_SECRET}%%"
-CONFIG_EOF
-    chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
+secret = "Stalwart123456789"
 
-    # --- Retrieve admin password from Secret Manager ---
-    GCP_PROJECT_ID=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id)
+[jmap.request-limiter]
+rate = "1000/1m"
+
+[api]
+enable = true
+
+[api.rate-limiter]
+rate = "1000/1m"
+CONFIG_EOF
+      chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
+    fi
+
+    # --- Retrieve secrets from Secret Manager ---
     GCP_PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id)
 
-    # Get an OAuth token for Secret Manager API access
     OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
-      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+      | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
 
     if [ -z "$OAUTH_TOKEN" ]; then
       echo "ERROR: Could not retrieve OAuth token from metadata server"
       exit 1
     fi
 
-    # Fetch the secret using the Secret Manager API
-    SECRET_RESPONSE=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
-      -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
+    fetch_secret () {
+      local name="$1"
+      local resp
+      resp=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/$name/versions/latest:access" \
+        -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
+      echo "$resp" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/' | base64 -d 2>/dev/null || true
+    }
 
-    # Extract the base64-encoded password from the JSON response
-    BASE64_PASSWORD=$(echo "$SECRET_RESPONSE" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/')
-    ADMIN_PASSWORD=$(echo "$BASE64_PASSWORD" | base64 -d 2>/dev/null || echo "")
+    ADMIN_PASSWORD=$(fetch_secret "stalwart-admin-password")
+    DB_PASSWORD=$(fetch_secret "db-password")
 
     if [ -z "$ADMIN_PASSWORD" ]; then
       echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
       exit 1
     fi
-    export ADMIN_PASSWORD
+    if [ -z "$DB_PASSWORD" ]; then
+      echo "ERROR: Could not retrieve db-password from Secret Manager"
+      exit 1
+    fi
+
+    # --- Define Stalwart environment variables ---
+    export STALWART_PG_HOST="10.64.0.3"
+    export STALWART_PG_DATABASE="stalwart"
+    export STALWART_PG_USER="stalwart"
+    export STALWART_PG_PASSWORD="$DB_PASSWORD"
+    export STALWART_FS_PATH="/opt/stalwart-mail/blobs"
+    export STALWART_ADMIN_SECRET="$ADMIN_PASSWORD"
 
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
@@ -206,7 +264,7 @@ CONFIG_EOF
 version: "3.9"
 services:
   stalwart:
-    image: stalwartlabs/stalwart:latest
+    image: stalwartlabs/stalwart:${var.stalwart_image_tag}
     container_name: stalwart
     restart: unless-stopped
     ports:
@@ -220,13 +278,23 @@ services:
       - /mnt/stalwart-data/stalwart:/opt/stalwart-mail
       # TLS certificates for secure JMAP listener (8443)
       - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
+    env_file:
+      - /opt/stalwart/.stalwart.env
     environment:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
-      - STALWART_ADMIN_SECRET=REPLACE_WITH_PASSWORD
 EOF
 
-    # Replace placeholder with actual password from environment
-    sed -i "s|REPLACE_WITH_PASSWORD|$ADMIN_PASSWORD|g" /opt/stalwart/docker-compose.yml
+    # Restricted env file (avoid embedding secrets in docker-compose.yml)
+    cat > /opt/stalwart/.stalwart.env <<EOF_ENV
+DOMAIN=$DOMAIN
+STALWART_ADMIN_SECRET=$ADMIN_PASSWORD
+STALWART_PG_HOST=10.64.0.3
+STALWART_PG_DATABASE=stalwart
+STALWART_PG_USER=stalwart
+STALWART_PG_PASSWORD=$DB_PASSWORD
+STALWART_FS_PATH=/opt/stalwart-mail/blobs
+EOF_ENV
+    chmod 600 /opt/stalwart/.stalwart.env
 
     # --- Start the stack with retries ---
     echo "Attempting to start Stalwart container..."
@@ -292,7 +360,7 @@ resource "google_compute_instance" "stalwart_primary" {
   machine_type = "e2-medium"
   zone         = var.zone
 
-  tags = ["stalwart"]
+  tags = ["stalwart", "v2"]
 
   boot_disk {
     initialize_params {
@@ -320,11 +388,8 @@ resource "google_compute_instance" "stalwart_primary" {
   metadata_startup_script = local.stalwart_startup_script
 
   service_account {
-    email = google_service_account.stalwart_vm.email
-    scopes = [
-      "https://www.googleapis.com/auth/sqlservice.admin",
-      "https://www.googleapis.com/auth/cloud-platform",
-    ]
+    email  = google_service_account.stalwart_vm.email
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
   }
 }
 
@@ -362,11 +427,8 @@ resource "google_compute_instance" "stalwart_secondary" {
   metadata_startup_script = local.stalwart_startup_script
 
   service_account {
-    email = google_service_account.stalwart_vm.email
-    scopes = [
-      "https://www.googleapis.com/auth/sqlservice.admin",
-      "https://www.googleapis.com/auth/cloud-platform",
-    ]
+    email  = google_service_account.stalwart_vm.email
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
   }
 }
 
@@ -390,7 +452,7 @@ resource "google_compute_firewall" "stalwart_smtp_in" {
   target_tags   = ["stalwart"]
 }
 
-# JMAP / management API — VPC-internal only (port 8080)
+# JMAP / management API — VPC-internal only (port 8080, 8000)
 resource "google_compute_firewall" "stalwart_internal" {
   name    = "stalwart-internal"
   network = "default"
@@ -399,7 +461,7 @@ resource "google_compute_firewall" "stalwart_internal" {
 
   allow {
     protocol = "tcp"
-    ports    = ["8080"]
+    ports    = ["8000", "8080"]
   }
 
   # Only allow traffic originating from within the VPC (RFC-1918 10.x.x.x)
