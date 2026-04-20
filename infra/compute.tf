@@ -200,9 +200,9 @@ CONFIG_EOF
     fi
     export ADMIN_PASSWORD
 
-    # --- Write Stalwart docker-compose.yml with retrieved password ---
+    # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
-    cat > /opt/stalwart/docker-compose.yml <<EOF
+    cat > /opt/stalwart/docker-compose.yml <<'EOF'
 version: "3.9"
 services:
   stalwart:
@@ -222,8 +222,11 @@ services:
       - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
     environment:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
-      - STALWART_ADMIN_SECRET=\$ADMIN_PASSWORD
+      - STALWART_ADMIN_SECRET=REPLACE_WITH_PASSWORD
 EOF
+
+    # Replace placeholder with actual password from environment
+    sed -i "s|REPLACE_WITH_PASSWORD|$ADMIN_PASSWORD|g" /opt/stalwart/docker-compose.yml
 
     # --- Start the stack with retries ---
     echo "Attempting to start Stalwart container..."
