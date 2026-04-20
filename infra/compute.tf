@@ -147,7 +147,7 @@ locals {
     # Do NOT overwrite on every reboot; preserve any admin/UI changes.
     mkdir -p /mnt/stalwart-data/stalwart/etc
     if [ ! -f /mnt/stalwart-data/stalwart/etc/config.toml ]; then
-      cat > /mnt/stalwart-data/stalwart/etc/config.toml <<CONFIG_EOF
+      cat > /mnt/stalwart-data/stalwart/etc/config.toml <<"CONFIG_EOF"
 [server]
 hostname = "$${DOMAIN}"
 
