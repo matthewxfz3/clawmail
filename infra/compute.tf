@@ -134,39 +134,9 @@ locals {
     chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
     chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
 
-    # --- Retrieve admin password from Secret Manager first ---
-    GCP_PROJECT_ID=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id)
-    GCP_PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id)
-
-    # Get an OAuth token for Secret Manager API access
-    OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
-      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
-
-    if [ -z "$OAUTH_TOKEN" ]; then
-      echo "ERROR: Could not retrieve OAuth token from metadata server"
-      exit 1
-    fi
-
-    # Fetch the secret using the Secret Manager API
-    SECRET_RESPONSE=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
-      -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
-
-    # Extract the base64-encoded password from the JSON response
-    # Use grep to find the line with "data" and extract the value
-    BASE64_PASSWORD=$(echo "$SECRET_RESPONSE" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/')
-    ADMIN_PASSWORD=$(echo "$BASE64_PASSWORD" | base64 -d 2>/dev/null || echo "")
-
-    if [ -z "$ADMIN_PASSWORD" ]; then
-      echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
-      echo "Response: $SECRET_RESPONSE"
-      exit 1
-    fi
-    export ADMIN_PASSWORD
-    echo "DEBUG: Retrieved admin password from Secret Manager: length=${#ADMIN_PASSWORD}, first_char=$(echo "$ADMIN_PASSWORD" | cut -c1)"
-
-    # --- Create Stalwart config with admin password embedded ---
+    # --- Create Stalwart config with environment variable references ---
     mkdir -p /mnt/stalwart-data/stalwart/etc
-    cat > /mnt/stalwart-data/stalwart/etc/config.toml <<CONFIG_EOF
+    cat > /mnt/stalwart-data/stalwart/etc/config.toml <<'CONFIG_EOF'
 [server]
 hostname = "fridaymailer.com"
 
@@ -198,7 +168,7 @@ type = "internal"
 
 [authentication.fallback-admin]
 user = "admin"
-secret = "$ADMIN_PASSWORD"
+secret = "%{env:STALWART_ADMIN_SECRET}%"
 CONFIG_EOF
     chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
 
