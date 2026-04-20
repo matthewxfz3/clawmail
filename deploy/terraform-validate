@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Validate Terraform configuration for Clawmail
+# Usage: ./deploy/terraform-validate
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infra"
+
+cd "$INFRA_DIR"
+
+echo "🔍 Validating Terraform configuration..."
+terraform validate
+
+if terraform fmt -check -recursive . > /dev/null 2>&1; then
+  echo "✅ Terraform formatting: OK"
+else
+  echo "⚠️  Terraform formatting issues found. Run 'terraform fmt -recursive .' to fix."
+fi
+
+echo "✅ Configuration is valid"

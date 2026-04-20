@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Show Terraform changes before applying
+# Usage: ./deploy/terraform-plan [options]
+# Examples:
+#   ./deploy/terraform-plan              # Show all changes
+#   ./deploy/terraform-plan -lock=false  # Skip state locking
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infra"
+
+cd "$INFRA_DIR"
+
+echo "📋 Terraform Plan"
+echo "─────────────────"
+terraform plan "$@"

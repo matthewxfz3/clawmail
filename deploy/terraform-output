@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Display Terraform outputs (Cloud Run URL, Cloud SQL connection, etc.)
+# Usage: ./deploy/terraform-output [output-name]
+# Examples:
+#   ./deploy/terraform-output              # Show all outputs
+#   ./deploy/terraform-output cloud_run_url
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infra"
+
+cd "$INFRA_DIR"
+
+echo "📊 Terraform Outputs"
+echo "───────────────────"
+terraform output "$@"

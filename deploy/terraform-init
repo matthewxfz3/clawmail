@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Initialize Terraform for Clawmail infrastructure
+# Usage: ./deploy/terraform-init
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infra"
+
+cd "$INFRA_DIR"
+
+echo "🔧 Initializing Terraform..."
+terraform init
+
+echo "✅ Terraform initialized. Next steps:"
+echo "   1. Review changes: terraform plan"
+echo "   2. Apply changes: terraform apply"

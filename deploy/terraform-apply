@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Apply Terraform changes to GCP infrastructure
+# Usage: ./deploy/terraform-apply [options]
+# Examples:
+#   ./deploy/terraform-apply              # Interactive approve
+#   ./deploy/terraform-apply -auto-approve -lock=false
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$SCRIPT_DIR/../infra"
+
+cd "$INFRA_DIR"
+
+echo "🚀 Applying Terraform changes..."
+echo "WARNING: This will modify your GCP infrastructure"
+echo ""
+terraform apply "$@"
+
+echo ""
+echo "✅ Terraform apply complete"
