@@ -205,15 +205,6 @@ depth = 2
 [authentication.fallback-admin]
 user = "admin"
 secret = "Stalwart123456789"
-
-[jmap.request-limiter]
-rate = "1000/1m"
-
-[api]
-enable = true
-
-[api.rate-limiter]
-rate = "1000/1m"
 CONFIG_EOF
       chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
     fi
