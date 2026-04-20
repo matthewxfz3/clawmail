@@ -56,28 +56,6 @@ resource "google_secret_manager_secret_iam_member" "stalwart_vm_secrets" {
   member    = "serviceAccount:${google_service_account.stalwart_vm.email}"
 }
 
-# Create HMAC credentials for Stalwart to access GCS via S3-compatible API
-resource "google_service_account_key" "stalwart_gcs_hmac" {
-  service_account_id = google_service_account.stalwart_vm.name
-  public_key_type    = "TYPE_X509_PEM"
-}
-
-# Generate HMAC key (S3-compatible credentials for GCS)
-# Note: This requires gcloud interactively after Terraform apply
-# For automation, we'll use the service account key and derive HMAC from it
-variable "gcs_access_key" {
-  description = "GCS HMAC access key (generated separately via gcloud)"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "gcs_secret_key" {
-  description = "GCS HMAC secret key (generated separately via gcloud)"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
 
 # Startup script: install Docker + Compose, write docker-compose.yml, start stack
 locals {
@@ -86,6 +64,7 @@ locals {
     set -euo pipefail
 
     DOMAIN="${var.domain}"
+    PROJECT_ID="${var.project_id}"
 
     # --- Format and mount persistent disk ---
     # Wait for disk to appear (sdb or sdc depending on device order)
@@ -261,10 +240,11 @@ CONFIG_EOF
       echo "$resp" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/' | base64 -d 2>/dev/null || true
     }
 
-    ADMIN_PASSWORD=$(fetch_secret "stalwart-admin-password")
-    DB_PASSWORD=$(fetch_secret "db-password")
-    GCS_ACCESS_KEY=$(fetch_secret "gcs-access-key")
-    GCS_SECRET_KEY=$(fetch_secret "gcs-secret-key")
+    # Retrieve secrets using gcloud (more reliable than metadata server)
+    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret="stalwart-admin-password" --project="${PROJECT_ID}" 2>/dev/null || echo "")
+    DB_PASSWORD=$(gcloud secrets versions access latest --secret="db-password" --project="${PROJECT_ID}" 2>/dev/null || echo "")
+    GCS_ACCESS_KEY=$(gcloud secrets versions access latest --secret="gcs-access-key" --project="${PROJECT_ID}" 2>/dev/null || echo "")
+    GCS_SECRET_KEY=$(gcloud secrets versions access latest --secret="gcs-secret-key" --project="${PROJECT_ID}" 2>/dev/null || echo "")
 
     if [ -z "$ADMIN_PASSWORD" ]; then
       echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
