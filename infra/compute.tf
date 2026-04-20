@@ -162,6 +162,7 @@ locals {
       exit 1
     fi
     export ADMIN_PASSWORD
+    echo "DEBUG: Retrieved admin password from Secret Manager: length=${#ADMIN_PASSWORD}, first_char=$(echo "$ADMIN_PASSWORD" | cut -c1)"
 
     # --- Create Stalwart config with admin password embedded ---
     mkdir -p /mnt/stalwart-data/stalwart/etc
