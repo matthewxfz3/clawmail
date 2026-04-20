@@ -168,7 +168,7 @@ type = "internal"
 
 [authentication.fallback-admin]
 user = "admin"
-secret = "%{env:STALWART_ADMIN_SECRET}%"
+secret = "admin123"
 CONFIG_EOF
     chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
 
