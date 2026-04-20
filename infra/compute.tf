@@ -134,8 +134,9 @@ locals {
     chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
     chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
 
-    # --- Create Stalwart config with environment variable references ---
+    # --- Create Stalwart config ---
     mkdir -p /mnt/stalwart-data/stalwart/etc
+    rm -f /mnt/stalwart-data/stalwart/etc/config.toml
     cat > /mnt/stalwart-data/stalwart/etc/config.toml <<'CONFIG_EOF'
 [server]
 hostname = "fridaymailer.com"
@@ -168,7 +169,7 @@ type = "internal"
 
 [authentication.fallback-admin]
 user = "admin"
-secret = "admin123"
+secret = "%{env:STALWART_ADMIN_SECRET}%"
 CONFIG_EOF
     chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
 
