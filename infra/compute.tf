@@ -172,9 +172,36 @@ secret = "%{env:STALWART_ADMIN_SECRET}%"
 CONFIG_EOF
     chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
 
+    # --- Retrieve admin password from Secret Manager ---
+    GCP_PROJECT_ID=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id)
+    GCP_PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id)
+
+    # Get an OAuth token for Secret Manager API access
+    OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+    if [ -z "$OAUTH_TOKEN" ]; then
+      echo "ERROR: Could not retrieve OAuth token from metadata server"
+      exit 1
+    fi
+
+    # Fetch the secret using the Secret Manager API
+    SECRET_RESPONSE=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/stalwart-admin-password/versions/latest:access" \
+      -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
+
+    # Extract the base64-encoded password from the JSON response
+    BASE64_PASSWORD=$(echo "$SECRET_RESPONSE" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/')
+    ADMIN_PASSWORD=$(echo "$BASE64_PASSWORD" | base64 -d 2>/dev/null || echo "")
+
+    if [ -z "$ADMIN_PASSWORD" ]; then
+      echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
+      exit 1
+    fi
+    export ADMIN_PASSWORD
+
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
-    cat > /opt/stalwart/docker-compose.yml <<'EOF'
+    cat > /opt/stalwart/docker-compose.yml <<EOF
 version: "3.9"
 services:
   stalwart:
@@ -194,7 +221,7 @@ services:
       - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
     environment:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
-      - STALWART_ADMIN_SECRET=$ADMIN_PASSWORD
+      - STALWART_ADMIN_SECRET=${ADMIN_PASSWORD}
 EOF
 
     # --- Start the stack with retries ---
