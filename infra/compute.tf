@@ -2,13 +2,14 @@
 # Stalwart Mail Server — Compute Engine VM
 # ---------------------------------------------------------------------------
 
-# Persistent disk for primary Stalwart VM
+# Persistent disk for primary Stalwart VM (small, only for config/temp data)
+# Email bodies stored in GCS, email metadata in PostgreSQL
 resource "google_compute_disk" "stalwart_data_primary" {
   name        = "stalwart-data-primary"
   type        = "pd-standard"
   zone        = var.zone
-  size        = 100 # 100GB for mail data
-  description = "Stalwart mail server persistent storage (primary)"
+  size        = 20 # 20GB sufficient for config, temp data, and certs
+  description = "Stalwart mail server persistent storage (primary) - email bodies in GCS"
 }
 
 # Persistent disk for secondary Stalwart VM (for HA failover)
@@ -48,11 +49,34 @@ resource "google_project_iam_member" "stalwart_vm_cloudsql" {
 
 # Allow the VM's SA to read only the specific secrets it needs (least privilege)
 resource "google_secret_manager_secret_iam_member" "stalwart_vm_secrets" {
-  for_each  = toset(["stalwart-admin-password", "db-password"])
+  for_each  = toset(["stalwart-admin-password", "db-password", "gcs-access-key", "gcs-secret-key"])
   project   = var.project_id
-  secret_id = google_secret_manager_secret.secrets[each.key].secret_id
+  secret_id = each.key
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.stalwart_vm.email}"
+}
+
+# Create HMAC credentials for Stalwart to access GCS via S3-compatible API
+resource "google_service_account_key" "stalwart_gcs_hmac" {
+  service_account_id = google_service_account.stalwart_vm.name
+  public_key_type    = "TYPE_X509_PEM"
+}
+
+# Generate HMAC key (S3-compatible credentials for GCS)
+# Note: This requires gcloud interactively after Terraform apply
+# For automation, we'll use the service account key and derive HMAC from it
+variable "gcs_access_key" {
+  description = "GCS HMAC access key (generated separately via gcloud)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "gcs_secret_key" {
+  description = "GCS HMAC secret key (generated separately via gcloud)"
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 # Startup script: install Docker + Compose, write docker-compose.yml, start stack
@@ -179,7 +203,7 @@ type = "internal"
 
 [storage]
 data = "postgresql"
-blob = "filesystem"
+blob = "s3"
 
 [store."postgresql"]
 type = "postgresql"
@@ -197,15 +221,23 @@ allow-invalid-certs = false
 [store."postgresql".pool]
 max-connections = 10
 
-[store."filesystem"]
-type = "fs"
-path = "/opt/stalwart-mail/blobs"
-depth = 2
+[store."s3"]
+type = "s3"
+bucket = "clawmail-stalwart-blobs-ai-for-marketing-468406"
+endpoint = "https://storage.googleapis.com"
+region = "us-west1"
+access-key = "GCS_ACCESS_KEY_PLACEHOLDER"
+secret-key = "GCS_SECRET_KEY_PLACEHOLDER"
 
 [authentication.fallback-admin]
 user = "admin"
 secret = "Stalwart123456789"
 CONFIG_EOF
+
+      # Replace GCS credentials placeholders
+      sed -i "s|GCS_ACCESS_KEY_PLACEHOLDER|$GCS_ACCESS_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      sed -i "s|GCS_SECRET_KEY_PLACEHOLDER|$GCS_SECRET_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
+
       chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
     fi
 
@@ -231,6 +263,8 @@ CONFIG_EOF
 
     ADMIN_PASSWORD=$(fetch_secret "stalwart-admin-password")
     DB_PASSWORD=$(fetch_secret "db-password")
+    GCS_ACCESS_KEY=$(fetch_secret "gcs-access-key")
+    GCS_SECRET_KEY=$(fetch_secret "gcs-secret-key")
 
     if [ -z "$ADMIN_PASSWORD" ]; then
       echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
@@ -238,6 +272,14 @@ CONFIG_EOF
     fi
     if [ -z "$DB_PASSWORD" ]; then
       echo "ERROR: Could not retrieve db-password from Secret Manager"
+      exit 1
+    fi
+    if [ -z "$GCS_ACCESS_KEY" ]; then
+      echo "ERROR: Could not retrieve gcs-access-key from Secret Manager"
+      exit 1
+    fi
+    if [ -z "$GCS_SECRET_KEY" ]; then
+      echo "ERROR: Could not retrieve gcs-secret-key from Secret Manager"
       exit 1
     fi
 

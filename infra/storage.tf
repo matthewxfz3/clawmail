@@ -43,3 +43,33 @@ resource "google_storage_bucket_iam_member" "clawmail_attachments_cloudrun" {
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.clawmail_mcp_run.email}"
 }
+
+# ---------------------------------------------------------------------------
+# GCS Bucket — Stalwart email bodies (blobs)
+# ---------------------------------------------------------------------------
+
+resource "google_storage_bucket" "stalwart_blobs" {
+  name     = "clawmail-stalwart-blobs-${var.project_id}"
+  location = var.region
+
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  # Email bodies can be archived after 1 year
+  lifecycle_rule {
+    action {
+      type          = "SetStorageClass"
+      storage_class = "COLDLINE"
+    }
+    condition {
+      age = 365
+    }
+  }
+}
+
+# Allow Stalwart VM service account to read/write email bodies
+resource "google_storage_bucket_iam_member" "stalwart_blobs_vm" {
+  bucket = google_storage_bucket.stalwart_blobs.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.stalwart_vm.email}"
+}
