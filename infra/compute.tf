@@ -169,7 +169,7 @@ type = "internal"
 
 [authentication.fallback-admin]
 user = "admin"
-secret = "%{env:STALWART_ADMIN_SECRET}%"
+secret = "%%{env:STALWART_ADMIN_SECRET}%%"
 CONFIG_EOF
     chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
 
@@ -202,7 +202,7 @@ CONFIG_EOF
 
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
-    cat > /opt/stalwart/docker-compose.yml <<EOF
+    cat > /opt/stalwart/docker-compose.yml <<'EOF'
 version: "3.9"
 services:
   stalwart:
@@ -222,7 +222,7 @@ services:
       - /mnt/stalwart-data/stalwart/etc/certificates:/opt/stalwart-mail/etc/certificates:ro
     environment:
       - STALWART_CONFIG=/opt/stalwart-mail/etc/config.toml
-      - STALWART_ADMIN_SECRET=${ADMIN_PASSWORD}
+      - STALWART_ADMIN_SECRET=$ADMIN_PASSWORD
 EOF
 
     # --- Start the stack with retries ---
