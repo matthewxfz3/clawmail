@@ -56,6 +56,13 @@ resource "google_secret_manager_secret_iam_member" "stalwart_vm_secrets" {
   member    = "serviceAccount:${google_service_account.stalwart_vm.email}"
 }
 
+# Allow the VM's SA to write logs to Google Cloud Logging
+resource "google_project_iam_member" "stalwart_vm_logging" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.stalwart_vm.email}"
+}
+
 
 # Startup script: install Docker + Compose, write docker-compose.yml, start stack
 locals {
