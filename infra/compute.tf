@@ -448,17 +448,44 @@ EOF_ENV
           fi
         done || true
 
-        # --- Fallback: Delete old admin account via python-psycopg2 ---
+        # --- Fallback: Delete old admin account after Stalwart initializes database ---
         if [ $CLI_RESET_SUCCESS -eq 0 ]; then
-          echo "[$(date)] CLI reset failed; using Python to delete old admin account from database..."
+          echo "[$(date)] CLI reset failed; waiting for Stalwart to initialize database schema..."
           apt-get install -y python3-psycopg2 >/dev/null 2>&1
 
-          # Create a Python script to delete the admin account
-          python3 <<PYTHON_SCRIPT
+          # Wait for principals table to be created (up to 30 seconds)
+          TABLE_READY=0
+          for attempt in {1..30}; do
+            python3 <<PYTHON_SCRIPT
 import psycopg2
-import sys
-from datetime import datetime
+try:
+    conn = psycopg2.connect(
+        host="10.64.0.3",
+        database="stalwart",
+        user="stalwart",
+        password="$DB_PASSWORD"
+    )
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'principals';")
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    exit(0 if result else 1)
+except:
+    exit(1)
+PYTHON_SCRIPT
+            if [ $? -eq 0 ]; then
+              TABLE_READY=1
+              break
+            fi
+            sleep 1
+          done
 
+          if [ $TABLE_READY -eq 1 ]; then
+            echo "[$(date)] ✅ Database schema ready; attempting to delete old admin account..."
+            python3 <<PYTHON_SCRIPT
+import psycopg2
+from datetime import datetime
 try:
     conn = psycopg2.connect(
         host="10.64.0.3",
@@ -472,24 +499,18 @@ try:
     conn.commit()
     cur.close()
     conn.close()
-
     if deleted_rows > 0:
-        print(f"[{datetime.now().isoformat()}] ✅ Deleted {deleted_rows} admin account(s) from database")
-        sys.exit(0)
-    else:
-        print(f"[{datetime.now().isoformat()}] ⚠️  No admin account found to delete (may be first boot)")
-        sys.exit(0)
+        print(f"[{datetime.now().isoformat()}] ✅ Deleted {deleted_rows} admin account(s)")
 except Exception as e:
-    print(f"[{datetime.now().isoformat()}] ⚠️  Could not delete admin account: {e}")
-    sys.exit(0)
+    print(f"[{datetime.now().isoformat()}] ⚠️  Could not delete: {e}")
 PYTHON_SCRIPT
 
-          if [ $? -eq 0 ]; then
-            # Restart the container to reload config
+            # Restart container to reload config with fallback-admin active
             echo "[$(date)] Restarting Stalwart container to activate fallback-admin..."
             docker restart stalwart
-            echo "[$(date)] Waiting 5 seconds for restart to complete..."
             sleep 5
+          else
+            echo "[$(date)] ⚠️  Database schema not ready; fallback-admin will be used if needed"
           fi
         fi
 
