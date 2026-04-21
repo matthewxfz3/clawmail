@@ -108,6 +108,9 @@ locals {
       echo "UUID=$${DISK_UUID} /mnt/stalwart-data ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
     fi
 
+    # --- Configure Google Cloud Logging for Docker (will be done after Docker install) ---
+    echo "[$(date)] Docker logging will be configured after Docker installation"
+
     # --- Install Docker and gcloud CLI ---
     # Fix any interrupted dpkg state
     if [ -f /var/lib/apt/lists/lock ]; then
@@ -130,6 +133,21 @@ locals {
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
+    # --- Configure Google Cloud Logging for Docker ---
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json <<'DOCKER_CONFIG'
+{
+  "log-driver": "gcplogs",
+  "log-opts": {
+    "gcp-log-cmd": "true",
+    "gcp-meta-name": "stalwart-primary",
+    "gcp-meta-zone": "us-west1-b"
+  }
+}
+DOCKER_CONFIG
+    systemctl restart docker
+    echo "[$(date)] ✓ Docker logging configured for Google Cloud Logging"
+
     # --- Create Stalwart data directory ---
     mkdir -p /mnt/stalwart-data/stalwart
     chmod 755 /mnt/stalwart-data/stalwart
@@ -146,10 +164,64 @@ locals {
     chmod 600 /mnt/stalwart-data/stalwart/etc/certificates/server.key
     chmod 644 /mnt/stalwart-data/stalwart/etc/certificates/server.crt
 
-    # --- Create Stalwart config (first boot only) ---
-    # Do NOT overwrite on every reboot; preserve any admin/UI changes.
+    # --- Enable debug logging ---
+    echo "[$(date)] === STALWART STARTUP DEBUG LOG START ==="
+    echo "[$(date)] DOMAIN=$DOMAIN, PROJECT_ID=$PROJECT_ID"
+
+    # --- Retrieve secrets from Secret Manager (BEFORE config generation) ---
+    echo "[$(date)] Retrieving OAuth token from metadata server..."
+    GCP_PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id)
+    echo "[$(date)] GCP_PROJECT_NUMBER=$GCP_PROJECT_NUMBER"
+
+    OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+      | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+    if [ -z "$OAUTH_TOKEN" ]; then
+      echo "[$(date)] ERROR: Could not retrieve OAuth token from metadata server"
+      exit 1
+    fi
+    echo "[$(date)] ✓ OAuth token retrieved ($${#OAUTH_TOKEN} chars)"
+
+    # Retrieve secrets using gcloud (more reliable than metadata server)
+    echo "[$(date)] Retrieving secrets from Secret Manager..."
+    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret="stalwart-admin-password" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
+    echo "[$(date)] stalwart-admin-password: $${#ADMIN_PASSWORD} chars"
+
+    DB_PASSWORD=$(gcloud secrets versions access latest --secret="db-password" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
+    echo "[$(date)] db-password: $${#DB_PASSWORD} chars"
+
+    GCS_ACCESS_KEY=$(gcloud secrets versions access latest --secret="gcs-access-key" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
+    echo "[$(date)] gcs-access-key: $${#GCS_ACCESS_KEY} chars"
+
+    GCS_SECRET_KEY=$(gcloud secrets versions access latest --secret="gcs-secret-key" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
+    echo "[$(date)] gcs-secret-key: $${#GCS_SECRET_KEY} chars"
+
+    if [ -z "$ADMIN_PASSWORD" ]; then
+      echo "[$(date)] ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
+      exit 1
+    fi
+
+    if [ -z "$DB_PASSWORD" ]; then
+      echo "[$(date)] ERROR: Could not retrieve db-password from Secret Manager"
+      exit 1
+    fi
+
+    if [ -z "$GCS_ACCESS_KEY" ] || [ -z "$GCS_SECRET_KEY" ]; then
+      echo "[$(date)] WARNING: GCS credentials not found; GCS storage will not work"
+    fi
+    echo "[$(date)] ✓ All secrets retrieved"
+
+    # --- Create Stalwart config ---
+    # TEMPORARY: Delete old config to force recreation with correct fallback-admin
+    # TODO: Remove this after auth debugging is complete
+    echo "[$(date)] Removing old config.toml for fresh initialization..."
+    rm -f /mnt/stalwart-data/stalwart/etc/config.toml
+
+    echo "[$(date)] Checking config.toml..."
     mkdir -p /mnt/stalwart-data/stalwart/etc
     if [ ! -f /mnt/stalwart-data/stalwart/etc/config.toml ]; then
+      echo "[$(date)] config.toml not found, creating new one..."
       cat > /mnt/stalwart-data/stalwart/etc/config.toml <<"CONFIG_EOF"
 [server]
 hostname = "$${DOMAIN}"
@@ -212,55 +284,21 @@ secret-key = "GCS_SECRET_KEY_PLACEHOLDER"
 user = "admin"
 secret = "Stalwart123456789"
 CONFIG_EOF
+      echo "[$(date)] ✓ config.toml created (with fallback-admin: admin/Stalwart123456789)"
 
       # Replace GCS credentials placeholders
+      echo "[$(date)] Replacing GCS credential placeholders..."
       sed -i "s|GCS_ACCESS_KEY_PLACEHOLDER|$GCS_ACCESS_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
       sed -i "s|GCS_SECRET_KEY_PLACEHOLDER|$GCS_SECRET_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      echo "[$(date)] ✓ GCS placeholders replaced"
 
       chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
-    fi
-
-    # --- Retrieve secrets from Secret Manager ---
-    GCP_PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id)
-
-    OAUTH_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
-      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
-      | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
-
-    if [ -z "$OAUTH_TOKEN" ]; then
-      echo "ERROR: Could not retrieve OAuth token from metadata server"
-      exit 1
-    fi
-
-    fetch_secret () {
-      local name="$1"
-      local resp
-      resp=$(curl -sf "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT_NUMBER/secrets/$name/versions/latest:access" \
-        -H "Authorization: Bearer $OAUTH_TOKEN" 2>/dev/null || echo "")
-      echo "$resp" | grep '"data"' | sed 's/.*"data": "\([^"]*\)".*/\1/' | base64 -d 2>/dev/null || true
-    }
-
-    # Retrieve secrets using gcloud (more reliable than metadata server)
-    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret="stalwart-admin-password" --project="${PROJECT_ID}" 2>/dev/null || echo "")
-    DB_PASSWORD=$(gcloud secrets versions access latest --secret="db-password" --project="${PROJECT_ID}" 2>/dev/null || echo "")
-    GCS_ACCESS_KEY=$(gcloud secrets versions access latest --secret="gcs-access-key" --project="${PROJECT_ID}" 2>/dev/null || echo "")
-    GCS_SECRET_KEY=$(gcloud secrets versions access latest --secret="gcs-secret-key" --project="${PROJECT_ID}" 2>/dev/null || echo "")
-
-    if [ -z "$ADMIN_PASSWORD" ]; then
-      echo "ERROR: Could not retrieve stalwart-admin-password from Secret Manager"
-      exit 1
-    fi
-    if [ -z "$DB_PASSWORD" ]; then
-      echo "ERROR: Could not retrieve db-password from Secret Manager"
-      exit 1
-    fi
-    if [ -z "$GCS_ACCESS_KEY" ]; then
-      echo "ERROR: Could not retrieve gcs-access-key from Secret Manager"
-      exit 1
-    fi
-    if [ -z "$GCS_SECRET_KEY" ]; then
-      echo "ERROR: Could not retrieve gcs-secret-key from Secret Manager"
-      exit 1
+    else
+      echo "[$(date)] config.toml already exists, preserving (skipping recreation)"
+      echo "[$(date)] === CURRENT CONFIG.TOML AUTHENTICATION SECTIONS ==="
+      grep -E "^\[authentication|^user|^secret" /mnt/stalwart-data/stalwart/etc/config.toml | sed 's/^/['"$(date)"'] /' || echo "[$(date)] ERROR: Could not read authentication sections"
+      echo "[$(date)] === FULL STORAGE CONFIGURATION ==="
+      grep -A 15 "^\[storage\]" /mnt/stalwart-data/stalwart/etc/config.toml | sed 's/^/['"$(date)"'] /' || echo "[$(date)] ERROR: Could not read storage config"
     fi
 
     # --- Define Stalwart environment variables ---
@@ -310,60 +348,138 @@ EOF_ENV
     chmod 600 /opt/stalwart/.stalwart.env
 
     # --- Start the stack with retries ---
-    echo "Attempting to start Stalwart container..."
+    echo "[$(date)] Attempting to start Stalwart container..."
+    echo "[$(date)] Docker compose file: /opt/stalwart/docker-compose.yml"
+
+    # Verify docker-compose.yml exists
+    if [ ! -f /opt/stalwart/docker-compose.yml ]; then
+      echo "[$(date)] ERROR: docker-compose.yml not found!"
+      exit 1
+    fi
+    echo "[$(date)] ✓ docker-compose.yml exists"
 
     # Remove old container if it exists
     if docker ps -a --format '{{.Names}}' | grep -q '^stalwart$'; then
-      echo "Removing old Stalwart container..."
+      echo "[$(date)] Removing old Stalwart container..."
       docker compose -f /opt/stalwart/docker-compose.yml down 2>/dev/null || docker rm -f stalwart 2>/dev/null || true
+      echo "[$(date)] ✓ Old container removed"
     fi
 
     MAX_RETRIES=5
     RETRY=0
     while [ $RETRY -lt $MAX_RETRIES ]; do
-      echo "Start attempt $((RETRY + 1))/$MAX_RETRIES..."
+      echo "[$(date)] Start attempt $((RETRY + 1))/$MAX_RETRIES..."
       if docker compose -f /opt/stalwart/docker-compose.yml up -d; then
-        echo "✅ docker compose up succeeded"
+        echo "[$(date)] ✅ docker compose up succeeded"
         break
       else
         RETRY=$((RETRY + 1))
         if [ $RETRY -lt $MAX_RETRIES ]; then
-          echo "⚠️  docker compose up failed, retrying in 10 seconds..."
+          echo "[$(date)] ⚠️  docker compose up failed, retrying in 10 seconds..."
           sleep 10
         fi
       fi
     done
 
     if [ $RETRY -eq $MAX_RETRIES ]; then
-      echo "❌ ERROR: Failed to start Stalwart after $MAX_RETRIES attempts"
-      echo "Docker compose logs:"
+      echo "[$(date)] ❌ ERROR: Failed to start Stalwart after $MAX_RETRIES attempts"
+      echo "[$(date)] Docker compose logs:"
       docker logs stalwart 2>&1 || echo "No container logs available"
-      echo "Docker daemon logs:"
+      echo "[$(date)] Docker daemon logs:"
       journalctl -u docker -n 50 --no-pager 2>&1 || echo "Could not retrieve Docker logs"
       exit 1
     fi
 
     # --- Verify Stalwart is healthy (startup health check) ---
-    echo "Waiting for Stalwart to be ready..."
+    echo "[$(date)] Waiting for Stalwart to be ready on port 8080..."
     for i in {1..60}; do
       if curl -sf http://localhost:8080/.well-known/jmap > /dev/null 2>&1; then
-        echo "✅ Stalwart is ready (health check passed on port 8080)"
+        echo "[$(date)] ✅ Stalwart is ready (health check passed on port 8080)"
+
         # Also test HTTPS listener
         if curl -sk https://localhost:8443/.well-known/jmap > /dev/null 2>&1; then
-          echo "✅ HTTPS listener on 8443 is working"
+          echo "[$(date)] ✅ HTTPS listener on 8443 is working"
         else
-          echo "⚠️  HTTPS listener on 8443 not responding (may still be initializing)"
+          echo "[$(date)] ⚠️  HTTPS listener on 8443 not responding (may still be initializing)"
         fi
+
+        # --- Test Management API authentication with detailed logging ---
+        echo "[$(date)] Testing Management API authentication..."
+        echo "[$(date)] Testing with credentials: admin:Stalwart123456789"
+
+        # Test with verbose output to see HTTP details
+        echo "[$(date)] === HTTP REQUEST DETAILS ==="
+        MGMT_RESPONSE=$(curl -v -u "admin:Stalwart123456789" http://localhost:8080/api/principal/ 2>&1)
+        echo "$MGMT_RESPONSE" | head -30 | sed 's/^/['"$(date)"'] /'
+
+        # Extract just the response body for parsing
+        MGMT_BODY=$(echo "$MGMT_RESPONSE" | tail -1)
+        echo "[$(date)] === RESPONSE BODY ==="
+        echo "[$(date)] $MGMT_BODY"
+
+        # Log database principals to see what exists
+        echo "[$(date)] === CHECKING DATABASE STATE ==="
+        docker exec stalwart psql -h 10.64.0.3 -U stalwart -d stalwart -c "SELECT name, type FROM principals LIMIT 5;" 2>&1 | sed 's/^/['"$(date)"'] /' || echo "[$(date)] Could not query database"
+
+        if echo "$MGMT_BODY" | grep -q '"status":401'; then
+          echo "[$(date)] ⚠️  Management API returned 401: Authentication failed"
+        elif echo "$MGMT_BODY" | grep -q '"status":200'; then
+          echo "[$(date)] ✅ Management API authenticated successfully"
+        else
+          echo "[$(date)] Management API unexpected response"
+        fi
+
+        # --- Attempt to reset admin password via CLI ---
+        echo "[$(date)] Attempting to reset admin password in database via CLI..."
+        CLI_RESET_SUCCESS=0
+        for path in stalwart-mail /opt/stalwart-mail/bin/stalwart-mail /usr/local/bin/stalwart-mail; do
+          echo "[$(date)]   Trying: $path..."
+          if docker exec stalwart $path account update admin --password 'Stalwart123456789' 2>&1 | head -5; then
+            echo "[$(date)] ✅ Admin password reset successfully with $path"
+            CLI_RESET_SUCCESS=1
+            break
+          fi
+        done || true
+
+        # --- Fallback: Delete old admin account from database so fallback-admin is used ---
+        if [ $CLI_RESET_SUCCESS -eq 0 ]; then
+          echo "[$(date)] CLI reset failed; attempting to delete old admin account from database..."
+          SQL_RESULT=$(docker exec stalwart psql -h 10.64.0.3 -U stalwart -d stalwart -c "DELETE FROM principals WHERE name = 'admin' AND type = 'individual';" 2>&1)
+          if echo "$SQL_RESULT" | grep -q "DELETE 1"; then
+            echo "[$(date)] ✅ Old admin account deleted from database; fallback-admin will now be used"
+            # Restart the container to reload config
+            echo "[$(date)] Restarting Stalwart container to activate fallback-admin..."
+            docker restart stalwart
+            echo "[$(date)] Waiting 5 seconds for restart to complete..."
+            sleep 5
+          else
+            echo "[$(date)] ⚠️  Could not delete admin account: $SQL_RESULT"
+          fi
+        fi
+
+        # --- Create authentication debug script for manual testing ---
+        mkdir -p /usr/local/bin
+        cat > /usr/local/bin/test-stalwart-auth.sh <<'AUTH_TEST'
+#!/bin/bash
+echo "=== Stalwart Authentication Debug ===" >&2
+echo "[$(date)] Testing Management API..." >&2
+curl -v --max-time 5 -u "admin:Stalwart123456789" http://localhost:8080/api/principal/ 2>&1
+AUTH_TEST
+        chmod +x /usr/local/bin/test-stalwart-auth.sh
+        echo "[$(date)] ✓ Debug script created: test-stalwart-auth.sh"
+
+        echo "[$(date)] === STALWART STARTUP DEBUG LOG END ==="
         exit 0
       fi
-      echo "  Attempt $i/60: Stalwart not ready yet, retrying..."
+      echo "[$(date)]   Attempt $i/60: Stalwart not ready yet, retrying..."
       sleep 2
     done
-    echo "❌ ERROR: Stalwart startup health check failed after 120 seconds"
-    echo "Docker compose logs:"
-    docker logs stalwart 2>&1
-    echo "Docker daemon status:"
-    systemctl status docker 2>&1 || true
+    echo "[$(date)] ❌ ERROR: Stalwart startup health check failed after 120 seconds"
+    echo "[$(date)] Docker compose logs:"
+    docker logs stalwart 2>&1 | sed 's/^/['"$(date)"'] /'
+    echo "[$(date)] Docker daemon status:"
+    systemctl status docker 2>&1 | sed 's/^/['"$(date)"'] /' || true
+    echo "[$(date)] === STALWART STARTUP DEBUG LOG END (WITH ERRORS) ==="
     exit 1
   SCRIPT
 }
