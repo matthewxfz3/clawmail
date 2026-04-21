@@ -83,4 +83,8 @@ export const config = {
     // Leave empty in dev; set to a Memorystore Redis URL in production.
     url: process.env.REDIS_URL ?? "",
   },
+  telemetry: {
+    serviceName: process.env.OTEL_SERVICE_NAME ?? "clawmail-mcp",
+    logLevel: process.env.OTEL_LOG_LEVEL ?? "info",
+  },
 } as const;

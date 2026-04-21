@@ -15,7 +15,8 @@ async function stalwartFetch(
 ): Promise<Response> {
   const url = `${config.stalwart.url}${path}`;
   const headers = new Headers(options.headers as HeadersInit | undefined);
-  headers.set("Authorization", basicAuthHeader());
+  const authHeader = basicAuthHeader();
+  headers.set("Authorization", authHeader);
   if (!headers.has("Content-Type") && options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -24,7 +25,18 @@ async function stalwartFetch(
   if (config.stalwart.url.startsWith("https://")) {
     fetchOptions.dispatcher = config.stalwart.httpsAgent;
   }
-  return fetch(url, fetchOptions);
+  console.log(`[stalwart-mgmt] ${options.method || "GET"} ${path}`);
+  const res = await fetch(url, fetchOptions);
+  console.log(`[stalwart-mgmt] Response: ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    try {
+      const bodyText = await res.text();
+      console.log(`[stalwart-mgmt] Error body: ${bodyText}`);
+    } catch (e) {
+      console.log(`[stalwart-mgmt] Could not read error body`);
+    }
+  }
+  return res;
 }
 
 async function assertOk(res: Response, context: string): Promise<void> {

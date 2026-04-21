@@ -1,3 +1,29 @@
+// Initialize OpenTelemetry SDK before any other imports
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { Resource } from "@opentelemetry/resources";
+import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
+import { trace } from "@opentelemetry/api";
+
+const sdk = new NodeSDK({
+  resource: new Resource({
+    [SemanticResourceAttributes.SERVICE_NAME]: "clawmail-mcp",
+    [SemanticResourceAttributes.SERVICE_VERSION]: "1.0.0",
+  }),
+  traceExporter: new OTLPTraceExporter({
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318/v1/traces",
+  }),
+  instrumentations: getNodeAutoInstrumentations(),
+});
+
+sdk.start();
+process.on("SIGTERM", () => {
+  sdk.shutdown()
+    .catch((err) => console.error("Failed to shutdown SDK:", err))
+    .finally(() => process.exit(0));
+});
+
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -126,8 +152,16 @@ function rateLimitErr(tool: string) {
   );
 }
 
-/** Wraps an async tool call to record timing and error detail in the call log. */
+/** Wraps an async tool call to record timing and error detail in the call log, with OTel tracing. */
 async function runTool<T>(toolName: string, account: string, fn: () => Promise<T>): Promise<T> {
+  const tracer = trace.getTracer("clawmail-mcp");
+  const span = tracer.startSpan(`tool/${toolName}`, {
+    attributes: {
+      "tool.name": toolName,
+      "account": account,
+    },
+  });
+
   const start = Date.now();
   try {
     const result = await fn();
@@ -135,8 +169,12 @@ async function runTool<T>(toolName: string, account: string, fn: () => Promise<T
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    span.recordException(err instanceof Error ? err : new Error(msg));
+    span.setStatus({ code: 2 }); // ERROR status code
     recordCallEntry({ ts: start, tool: toolName, account, durationMs: Date.now() - start, status: "error", errorMsg: msg });
     throw err;
+  } finally {
+    span.end();
   }
 }
 

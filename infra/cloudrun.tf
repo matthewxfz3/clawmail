@@ -58,6 +58,11 @@ resource "google_cloud_run_v2_service" "clawmail_mcp" {
         value = "redis://${google_redis_instance.clawmail_cache.host}:${google_redis_instance.clawmail_cache.port}"
       }
 
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "clawmail-mcp"
+      }
+
       # Secret-backed environment variables
       env {
         name = "STALWART_ADMIN_PASSWORD"

@@ -1,0 +1,21 @@
+project_id                  = "your-gcp-project-id"
+region                      = "us-west1"
+zone                        = "us-west1-b"
+domain                      = "your-mail-domain.com"
+allowed_domains             = "your-alternate-domains.com"
+mcp_server_image            = "us-west1-docker.pkg.dev/your-project-id/clawmail/mcp-server:latest"
+stalwart_image_tag          = "latest"
+
+# Sensitive secrets — retrieve from Google Cloud Secret Manager
+# or provide via environment variables:
+# export TF_VAR_stalwart_admin_password="..."
+# export TF_VAR_db_password="..."
+# export TF_VAR_dashboard_password="..."
+# export TF_VAR_sendgrid_api_key="..."
+# export TF_VAR_mcp_api_key="..."
+stalwart_admin_password     = "your-password-here"
+db_password                 = "your-db-password-here"
+dashboard_password          = "your-dashboard-password-here"
+sendgrid_api_key            = "your-sendgrid-key-here"
+mcp_api_key                 = "your-mcp-api-key-here"
+# mcp_api_key_map           = "[{\"key\":\"...\",\"role\":\"admin\"}]"  # optional

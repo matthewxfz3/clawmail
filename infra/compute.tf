@@ -269,7 +269,7 @@ host = "10.64.0.3"
 port = 5432
 database = "stalwart"
 user = "stalwart"
-password = "745a401b85de13dd4782c5dc919cb61716dbbc90"
+password = "DB_PASSWORD_PLACEHOLDER"
 timeout = "15s"
 
 [store."postgresql".tls]
@@ -281,23 +281,29 @@ max-connections = 10
 
 [store."s3"]
 type = "s3"
-bucket = "clawmail-stalwart-blobs-ai-for-marketing-468406"
+bucket = "clawmail-stalwart-blobs-GCP_PROJECT_ID"
 endpoint = "https://storage.googleapis.com"
 region = "us-west1"
-access-key = "GCS_ACCESS_KEY_PLACEHOLDER"
-secret-key = "GCS_SECRET_KEY_PLACEHOLDER"
+access-key = "PLACEHOLDER_GCS_ACCESS_KEY"
+secret-key = "PLACEHOLDER_GCS_SECRET_KEY"
 
 [authentication.fallback-admin]
 user = "admin"
 secret = "Stalwart123456789"
+
+[telemetry]
+service-name = "stalwart-mail"
+log-level = "info"
 CONFIG_EOF
       echo "[$(date)] ✓ config.toml created (with fallback-admin: admin/Stalwart123456789)"
 
-      # Replace GCS credentials placeholders
-      echo "[$(date)] Replacing GCS credential placeholders..."
-      sed -i "s|GCS_ACCESS_KEY_PLACEHOLDER|$GCS_ACCESS_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
-      sed -i "s|GCS_SECRET_KEY_PLACEHOLDER|$GCS_SECRET_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
-      echo "[$(date)] ✓ GCS placeholders replaced"
+      # Replace credential and configuration placeholders
+      echo "[$(date)] Replacing credential and configuration placeholders..."
+      sed -i "s|PLACEHOLDER_GCS_ACCESS_KEY|$GCS_ACCESS_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      sed -i "s|PLACEHOLDER_GCS_SECRET_KEY|$GCS_SECRET_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      sed -i "s|DB_PASSWORD_PLACEHOLDER|$DB_PASSWORD|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      sed -i "s|GCP_PROJECT_ID|$${PROJECT_ID}|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      echo "[$(date)] ✓ All credential and configuration placeholders replaced"
 
       chmod 644 /mnt/stalwart-data/stalwart/etc/config.toml
     else
