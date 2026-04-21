@@ -5,23 +5,20 @@ Stalwart Management API returns HTTP 401 "You have to authenticate first" even w
 
 ## Root Cause Analysis - CONFIRMED
 
-### Issue: Stalwart v0.15.3 Fallback-Admin Not Working
-After systematic testing with fresh database, the root cause is identified:
+### Issue: Stalwart v0.15.3 Authentication Configuration Not Working
+After extensive testing, the root causes identified:
 
-**Stalwart v0.15.3 does NOT support the `[authentication.fallback-admin]` configuration directive.**
+1. **Fallback-Admin Not Supported**: v0.15.3 does NOT recognize `[authentication.fallback-admin]` configuration
+2. **Environment Variable Not Recognized**: `STALWART_ADMIN_SECRET` env var is ignored; Stalwart generates random password instead
+3. **Management API Requires Basic Auth**: No authentication bypass available
 
-Evidence:
-1. Fresh persistent disk created (no old admin account)
-2. config.toml explicitly configured with `[authentication.fallback-admin]` section
-3. curl sends correct Authorization header: `Basic YWRtaW46U3RhbHdhcnQxMjM0NTY3ODk=`
-4. Stalwart returns 401 "You have to authenticate first" (ignores fallback-admin config)
-5. Even with [telemetry] section removed, still returns 401
-
-### Why This Happened
-- Fallback-admin configuration may have been added in Stalwart v0.16.0+
-- v0.15.3 does not recognize or use the [authentication.fallback-admin] section
-- Without admin account initialization, no one can authenticate to Management API
-- Persistent disk had old admin account which also didn't work (encrypted differently?)
+### Evidence
+1. Fresh persistent disk created; no old admin account in database
+2. config.toml explicitly configured with `[authentication.fallback-admin]` section: IGNORED
+3. Docker env var `STALWART_ADMIN_SECRET` set to configured password: IGNORED
+4. Stalwart generates random admin password instead (e.g., `admin:N4QiueKCyF`)
+5. curl with generated password: ✅ Works (401 → 404)
+6. curl with configured password (admin:Stalwart123456789): ❌ Returns 401
 
 ## Methods Tried
 
@@ -86,21 +83,34 @@ Evidence:
 - Configure in MCP server instead of using fallback-admin
 - More complex but avoids version upgrade
 
-## Result: FIXED ✅
+## Status: PARTIAL RESOLUTION
 
-**Upgraded Stalwart to `latest` version (from v0.15.3)**
+### What Works ✅
+1. **OTel Successfully Enabled** - Distributed tracing infrastructure in place
+2. **Authentication Possible** - Using Stalwart-generated admin password
+3. **HTTP Basic Auth** - Works with generated password (admin:N4QiueKCyF)
+4. **Fresh Database** - No conflicts with old data
 
-### Confirmation
-- Before: HTTP 401 "You have to authenticate first"
-- After: HTTP 404 "The requested resource does not exist"
+### What Doesn't Work ❌
+1. **Configured Password** - Cannot use pre-configured `STALWART_ADMIN_PASSWORD` from Secret Manager
+2. **Management API Endpoints** - Return 404 (endpoint structure changed between versions)
+3. **JMAP Authentication** - Also returns 401 even with generated password
 
-**The 404 response proves authentication succeeded!** (401 indicates auth failed, 404 indicates auth passed but endpoint was wrong)
+## Detailed Findings
 
-### Summary of Solution
-1. v0.15.3 did NOT support `[authentication.fallback-admin]` directive
-2. Latest Stalwart version DOES support fallback-admin  
-3. Upgrading resolves the 401 authentication failure
-4. Admin credentials (admin:Stalwart123456789) now work correctly
+### Why v0.15.3 Doesn't Support Configuration
+- Stalwart v0.15.3 appears to be a development/beta version with limited authentication config options
+- Does not read `[authentication.fallback-admin]` section from config.toml
+- Does not honor `STALWART_ADMIN_SECRET` environment variable
+- Forces auto-generated random password on first run (security feature?)
+
+### Workaround Implemented
+Extract generated password from docker logs during startup:
+```bash
+GENERATED_ADMIN_PASS=$(docker logs stalwart | grep "administrator account" | grep -o "password '[^']*'" | cut -d"'" -f2)
+```
+
+This allows the startup script to update Secret Manager with the generated password, which the MCP server can then use.
 
 ## Current Stalwart Configuration
 - Version: v0.15.3

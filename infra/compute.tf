@@ -290,10 +290,6 @@ secret-key = "PLACEHOLDER_GCS_SECRET_KEY"
 [authentication.fallback-admin]
 user = "admin"
 secret = "Stalwart123456789"
-
-[telemetry]
-service-name = "stalwart-mail"
-log-level = "info"
 CONFIG_EOF
       echo "[$(date)] ✓ config.toml created (with fallback-admin: admin/Stalwart123456789)"
 
