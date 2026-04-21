@@ -454,10 +454,9 @@ EOF_ENV
           apt-get install -y python3-psycopg2 >/dev/null 2>&1
 
           # Create a Python script to delete the admin account
-          python3 <<'PYTHON_SCRIPT'
+          python3 <<PYTHON_SCRIPT
 import psycopg2
 import sys
-import os
 from datetime import datetime
 
 try:
@@ -465,7 +464,7 @@ try:
         host="10.64.0.3",
         database="stalwart",
         user="stalwart",
-        password=os.environ.get("DB_PASSWORD", "")
+        password="$DB_PASSWORD"
     )
     cur = conn.cursor()
     cur.execute("DELETE FROM principals WHERE name = 'admin' AND type = 'individual';")
