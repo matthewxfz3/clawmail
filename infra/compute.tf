@@ -415,19 +415,30 @@ EOF_ENV
         # --- Extract auto-generated admin credential from docker logs ---
         echo "[$(date)] Extracting auto-generated admin credential from Stalwart logs..."
         ADMIN_CRED=""
-        for attempt in {1..10}; do
+        for attempt in {1..15}; do
+          # Try multiple patterns to find the password
+          # Pattern 1: password 'xxxxx' (single quotes)
           ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -oP "password '[^']*'" | cut -d"'" -f2 | tail -1)
+          # Pattern 2: "password":"xxxxx" (JSON format)
+          if [ -z "$ADMIN_CRED" ]; then
+            ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -oP '"password":"[^"]*"' | cut -d'"' -f4 | tail -1)
+          fi
+          # Pattern 3: password of 'xxxxx' or similar
+          if [ -z "$ADMIN_CRED" ]; then
+            ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -i "admin.*password\|password.*admin" | grep -oE "'[A-Za-z0-9]{8,}'|\"[A-Za-z0-9]{8,}\"" | sed "s/['\"]//g" | tail -1)
+          fi
+
           if [ -n "$ADMIN_CRED" ]; then
-            echo "[$(date)] ✅ Found generated admin credential: admin:****${ADMIN_CRED: -3}"
+            echo "[$(date)] ✅ Found generated admin credential: admin:****$${ADMIN_CRED: -3}"
             break
           fi
-          echo "[$(date)] Credential not yet in logs, waiting... (attempt $attempt/10)"
-          sleep 1
+          echo "[$(date)] Credential not yet in logs, waiting... (attempt $attempt/15)"
+          sleep 2
         done
 
         if [ -z "$ADMIN_CRED" ]; then
-          echo "[$(date)] ⚠️  Could not extract credential from logs; using configured value"
-          ADMIN_CRED="$ADMIN_PASSWORD"
+          echo "[$(date)] ⚠️  Could not extract credential from logs; falling back to admin:admin"
+          ADMIN_CRED="admin"
         fi
 
         # --- Update Secret Manager with the actual generated credential ---
@@ -560,7 +571,7 @@ PYTHON_SCRIPT
 #!/bin/bash
 # Retrieve current admin credential from Secret Manager
 SECRET_ID="stalwart-admin-""password"
-CURRENT_PASS=$(gcloud secrets versions access latest --secret="$SECRET_ID" --project="${PROJECT_ID}" 2>/dev/null || echo "not-found")
+CURRENT_PASS=$(gcloud secrets versions access latest --secret="$SECRET_ID" 2>/dev/null || echo "not-found")
 echo "=== Stalwart Authentication Debug ===" >&2
 echo "[$(date)] Testing Management API with credential from Secret Manager..." >&2
 if [ "$CURRENT_PASS" != "not-found" ]; then
