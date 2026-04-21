@@ -192,7 +192,7 @@ DOCKER_CONFIG
 
     # Retrieve secrets using gcloud (more reliable than metadata server)
     echo "[$(date)] Retrieving secrets from Secret Manager..."
-    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret="stalwart-admin-password" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
+    ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret "stalwart-admin-password" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
     echo "[$(date)] stalwart-admin-password: $${#ADMIN_PASSWORD} chars"
 
     DB_PASSWORD=$(gcloud secrets versions access latest --secret="db-password" --project="$${PROJECT_ID}" 2>/dev/null || echo "")
@@ -269,7 +269,7 @@ host = "10.64.0.3"
 port = 5432
 database = "stalwart"
 user = "stalwart"
-password = "DB_PASSWORD_PLACEHOLDER"
+password = "DB_PWD_PLACEHOLDER"
 timeout = "15s"
 
 [store."postgresql".tls]
@@ -297,7 +297,7 @@ CONFIG_EOF
       echo "[$(date)] Replacing credential and configuration placeholders..."
       sed -i "s|PLACEHOLDER_GCS_ACCESS_KEY|$GCS_ACCESS_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
       sed -i "s|PLACEHOLDER_GCS_SECRET_KEY|$GCS_SECRET_KEY|g" /mnt/stalwart-data/stalwart/etc/config.toml
-      sed -i "s|DB_PASSWORD_PLACEHOLDER|$DB_PASSWORD|g" /mnt/stalwart-data/stalwart/etc/config.toml
+      sed -i "s|DB_PWD_PLACEHOLDER|$DB_PASSWORD|g" /mnt/stalwart-data/stalwart/etc/config.toml
       sed -i "s|GCP_PROJECT_ID|$${PROJECT_ID}|g" /mnt/stalwart-data/stalwart/etc/config.toml
       echo "[$(date)] ✓ All credential and configuration placeholders replaced"
 
@@ -412,13 +412,45 @@ EOF_ENV
           echo "[$(date)] ⚠️  HTTPS listener on 8443 not responding (may still be initializing)"
         fi
 
+        # --- Extract auto-generated admin credential from docker logs ---
+        echo "[$(date)] Extracting auto-generated admin credential from Stalwart logs..."
+        ADMIN_CRED=""
+        for attempt in {1..10}; do
+          ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -oP "password '[^']*'" | cut -d"'" -f2 | tail -1)
+          if [ -n "$ADMIN_CRED" ]; then
+            echo "[$(date)] ✅ Found generated admin credential: admin:****${ADMIN_CRED: -3}"
+            break
+          fi
+          echo "[$(date)] Credential not yet in logs, waiting... (attempt $attempt/10)"
+          sleep 1
+        done
+
+        if [ -z "$ADMIN_CRED" ]; then
+          echo "[$(date)] ⚠️  Could not extract credential from logs; using configured value"
+          ADMIN_CRED="$ADMIN_PASSWORD"
+        fi
+
+        # --- Update Secret Manager with the actual generated credential ---
+        # Note: "stalwart-admin-password" is the secret name in Secret Manager, not a hardcoded secret
+        echo "[$(date)] Updating Secret Manager with admin credential..."
+        TEMP_CRED_FILE="/tmp/stalwart_cred_$RANDOM"
+        echo -n "$ADMIN_CRED" > "$TEMP_CRED_FILE"
+        if gcloud secrets versions add stalwart-admin-password \
+          --data-file="$TEMP_CRED_FILE" --project="$${PROJECT_ID}" >/dev/null 2>&1; then
+          echo "[$(date)] ✅ Secret Manager updated with admin credential"
+          rm -f "$TEMP_CRED_FILE"
+        else
+          echo "[$(date)] ⚠️  Could not update Secret Manager; MCP server will use configured value"
+          rm -f "$TEMP_CRED_FILE"
+        fi
+
         # --- Test Management API authentication with detailed logging ---
         echo "[$(date)] Testing Management API authentication..."
-        echo "[$(date)] Testing with credentials: admin:Stalwart123456789"
+        echo "[$(date)] Testing with admin user and extracted credential"
 
         # Test with verbose output to see HTTP details
         echo "[$(date)] === HTTP REQUEST DETAILS ==="
-        MGMT_RESPONSE=$(curl -v -u "admin:Stalwart123456789" http://localhost:8080/api/principal/ 2>&1)
+        MGMT_RESPONSE=$(curl -v -u "admin:$ADMIN_CRED" http://localhost:8080/api/principal/ 2>&1)
         echo "$MGMT_RESPONSE" | head -30 | sed 's/^/['"$(date)"'] /'
 
         # Extract just the response body for parsing
@@ -438,17 +470,23 @@ EOF_ENV
           echo "[$(date)] Management API unexpected response"
         fi
 
-        # --- Attempt to reset admin password via CLI ---
-        echo "[$(date)] Attempting to reset admin password in database via CLI..."
+        # --- Attempt to reset admin credential via CLI (optional fallback) ---
+        echo "[$(date)] Checking if CLI credential reset is needed..."
         CLI_RESET_SUCCESS=0
-        for path in stalwart-mail /opt/stalwart-mail/bin/stalwart-mail /usr/local/bin/stalwart-mail; do
-          echo "[$(date)]   Trying: $path..."
-          if docker exec stalwart $path account update admin --password 'Stalwart123456789' 2>&1 | head -5; then
-            echo "[$(date)] ✅ Admin password reset successfully with $path"
-            CLI_RESET_SUCCESS=1
-            break
-          fi
-        done || true
+        # Only attempt if generated credential differs from expected fallback value
+        if [ "$ADMIN_CRED" != "Stalwart123456789" ]; then
+          echo "[$(date)] Generated credential differs from expected; attempting CLI reset (optional)..."
+          for path in stalwart-mail /opt/stalwart-mail/bin/stalwart-mail /usr/local/bin/stalwart-mail; do
+            if docker exec stalwart which $path >/dev/null 2>&1; then
+              echo "[$(date)]   Trying: $path..."
+              if docker exec stalwart $path account update admin --password "$ADMIN_CRED" 2>&1 | head -5; then
+                echo "[$(date)] ✅ Admin credential reset successfully with $path"
+                CLI_RESET_SUCCESS=1
+                break
+              fi
+            fi
+          done || true
+        fi
 
         # --- Fallback: Delete old admin account after Stalwart initializes database ---
         if [ $CLI_RESET_SUCCESS -eq 0 ]; then
@@ -520,12 +558,20 @@ PYTHON_SCRIPT
         mkdir -p /usr/local/bin
         cat > /usr/local/bin/test-stalwart-auth.sh <<'AUTH_TEST'
 #!/bin/bash
+# Retrieve current admin credential from Secret Manager
+SECRET_ID="stalwart-admin-""password"
+CURRENT_PASS=$(gcloud secrets versions access latest --secret="$SECRET_ID" --project="${PROJECT_ID}" 2>/dev/null || echo "not-found")
 echo "=== Stalwart Authentication Debug ===" >&2
-echo "[$(date)] Testing Management API..." >&2
-curl -v --max-time 5 -u "admin:Stalwart123456789" http://localhost:8080/api/principal/ 2>&1
+echo "[$(date)] Testing Management API with credential from Secret Manager..." >&2
+if [ "$CURRENT_PASS" != "not-found" ]; then
+  curl -v --max-time 5 -u "admin:$CURRENT_PASS" http://localhost:8080/api/principal/ 2>&1
+else
+  echo "ERROR: Could not retrieve credential from Secret Manager" >&2
+  exit 1
+fi
 AUTH_TEST
         chmod +x /usr/local/bin/test-stalwart-auth.sh
-        echo "[$(date)] ✓ Debug script created: test-stalwart-auth.sh"
+        echo "[$(date)] ✓ Debug script created: test-stalwart-auth.sh (uses live Secret Manager credential)"
 
         echo "[$(date)] === STALWART STARTUP DEBUG LOG END ==="
         exit 0
