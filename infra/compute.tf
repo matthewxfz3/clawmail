@@ -448,24 +448,49 @@ EOF_ENV
           fi
         done || true
 
-        # --- Fallback: Install psql and delete old admin account from database ---
+        # --- Fallback: Delete old admin account via python-psycopg2 ---
         if [ $CLI_RESET_SUCCESS -eq 0 ]; then
-          echo "[$(date)] CLI reset failed; installing postgresql-client to access database..."
-          apt-get install -y postgresql-client >/dev/null 2>&1
+          echo "[$(date)] CLI reset failed; using Python to delete old admin account from database..."
+          apt-get install -y python3-psycopg2 >/dev/null 2>&1
 
-          echo "[$(date)] Attempting to delete old admin account from database..."
-          SQL_RESULT=$(PGPASSWORD="$DB_PASSWORD" psql -h 10.64.0.3 -U stalwart -d stalwart -c "DELETE FROM principals WHERE name = 'admin' AND type = 'individual';" 2>&1)
-          echo "[$(date)] SQL Result: $SQL_RESULT"
+          # Create a Python script to delete the admin account
+          python3 <<'PYTHON_SCRIPT'
+import psycopg2
+import sys
+import os
+from datetime import datetime
 
-          if echo "$SQL_RESULT" | grep -qi "DELETE 1"; then
-            echo "[$(date)] ✅ Old admin account deleted from database; fallback-admin will now be used"
+try:
+    conn = psycopg2.connect(
+        host="10.64.0.3",
+        database="stalwart",
+        user="stalwart",
+        password=os.environ.get("DB_PASSWORD", "")
+    )
+    cur = conn.cursor()
+    cur.execute("DELETE FROM principals WHERE name = 'admin' AND type = 'individual';")
+    deleted_rows = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    if deleted_rows > 0:
+        print(f"[{datetime.now().isoformat()}] ✅ Deleted {deleted_rows} admin account(s) from database")
+        sys.exit(0)
+    else:
+        print(f"[{datetime.now().isoformat()}] ⚠️  No admin account found to delete (may be first boot)")
+        sys.exit(0)
+except Exception as e:
+    print(f"[{datetime.now().isoformat()}] ⚠️  Could not delete admin account: {e}")
+    sys.exit(0)
+PYTHON_SCRIPT
+
+          if [ $? -eq 0 ]; then
             # Restart the container to reload config
             echo "[$(date)] Restarting Stalwart container to activate fallback-admin..."
             docker restart stalwart
             echo "[$(date)] Waiting 5 seconds for restart to complete..."
             sleep 5
-          else
-            echo "[$(date)] ⚠️  Could not delete admin account (account may not exist or database access failed)"
           fi
         fi
 
