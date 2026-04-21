@@ -448,11 +448,16 @@ EOF_ENV
           fi
         done || true
 
-        # --- Fallback: Delete old admin account from database so fallback-admin is used ---
+        # --- Fallback: Install psql and delete old admin account from database ---
         if [ $CLI_RESET_SUCCESS -eq 0 ]; then
-          echo "[$(date)] CLI reset failed; attempting to delete old admin account from database..."
-          SQL_RESULT=$(docker exec stalwart psql -h 10.64.0.3 -U stalwart -d stalwart -c "DELETE FROM principals WHERE name = 'admin' AND type = 'individual';" 2>&1)
-          if echo "$SQL_RESULT" | grep -q "DELETE 1"; then
+          echo "[$(date)] CLI reset failed; installing postgresql-client to access database..."
+          apt-get install -y postgresql-client >/dev/null 2>&1
+
+          echo "[$(date)] Attempting to delete old admin account from database..."
+          SQL_RESULT=$(PGPASSWORD="$DB_PASSWORD" psql -h 10.64.0.3 -U stalwart -d stalwart -c "DELETE FROM principals WHERE name = 'admin' AND type = 'individual';" 2>&1)
+          echo "[$(date)] SQL Result: $SQL_RESULT"
+
+          if echo "$SQL_RESULT" | grep -qi "DELETE 1"; then
             echo "[$(date)] ✅ Old admin account deleted from database; fallback-admin will now be used"
             # Restart the container to reload config
             echo "[$(date)] Restarting Stalwart container to activate fallback-admin..."
@@ -460,7 +465,7 @@ EOF_ENV
             echo "[$(date)] Waiting 5 seconds for restart to complete..."
             sleep 5
           else
-            echo "[$(date)] ⚠️  Could not delete admin account: $SQL_RESULT"
+            echo "[$(date)] ⚠️  Could not delete admin account (account may not exist or database access failed)"
           fi
         fi
 
