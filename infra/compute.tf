@@ -289,9 +289,9 @@ secret-key = "PLACEHOLDER_GCS_SECRET_KEY"
 
 [authentication.fallback-admin]
 user = "admin"
-secret = "Stalwart123456789"
+secret = "$${STALWART_ADMIN_PASSWORD}"
 CONFIG_EOF
-      echo "[$(date)] ✓ config.toml created (with fallback-admin: admin/Stalwart123456789)"
+      echo "[$(date)] ✓ config.toml created (with fallback-admin using STALWART_ADMIN_PASSWORD env var)"
 
       # Replace credential and configuration placeholders
       echo "[$(date)] Replacing credential and configuration placeholders..."
@@ -316,7 +316,7 @@ CONFIG_EOF
     export STALWART_PG_USER="stalwart"
     export STALWART_PG_PASSWORD="$DB_PASSWORD"
     export STALWART_FS_PATH="/opt/stalwart-mail/blobs"
-    export STALWART_ADMIN_SECRET="$ADMIN_PASSWORD"
+    export STALWART_ADMIN_PASSWORD="$ADMIN_PASSWORD"
 
     # --- Write Stalwart docker-compose.yml ---
     mkdir -p /opt/stalwart
@@ -347,7 +347,7 @@ EOF
     # Restricted env file (avoid embedding secrets in docker-compose.yml)
     cat > /opt/stalwart/.stalwart.env <<EOF_ENV
 DOMAIN=$DOMAIN
-STALWART_ADMIN_SECRET=$ADMIN_PASSWORD
+STALWART_ADMIN_PASSWORD=$ADMIN_PASSWORD
 STALWART_PG_HOST=10.64.0.3
 STALWART_PG_DATABASE=stalwart
 STALWART_PG_USER=stalwart
@@ -412,179 +412,22 @@ EOF_ENV
           echo "[$(date)] ⚠️  HTTPS listener on 8443 not responding (may still be initializing)"
         fi
 
-        # --- Extract auto-generated admin credential from docker logs ---
-        echo "[$(date)] Extracting auto-generated admin credential from Stalwart logs..."
-        ADMIN_CRED=""
-        for attempt in {1..15}; do
-          # Try multiple patterns to find the password
-          # Pattern 1: password 'xxxxx' (single quotes)
-          ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -oP "password '[^']*'" | cut -d"'" -f2 | tail -1)
-          # Pattern 2: "password":"xxxxx" (JSON format)
-          if [ -z "$ADMIN_CRED" ]; then
-            ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -oP '"password":"[^"]*"' | cut -d'"' -f4 | tail -1)
-          fi
-          # Pattern 3: password of 'xxxxx' or similar
-          if [ -z "$ADMIN_CRED" ]; then
-            ADMIN_CRED=$(docker logs stalwart 2>&1 | grep -i "admin.*password\|password.*admin" | grep -oE "'[A-Za-z0-9]{8,}'|\"[A-Za-z0-9]{8,}\"" | sed "s/['\"]//g" | tail -1)
-          fi
+        # --- Test Management API authentication (fallback-admin should work now) ---
+        echo "[$(date)] Testing Management API authentication with fallback-admin credentials..."
+        MGMT_TEST=$(curl -s -u "admin:$ADMIN_PASSWORD" http://localhost:8080/api/principal/ 2>&1)
 
-          if [ -n "$ADMIN_CRED" ]; then
-            echo "[$(date)] ✅ Found generated admin credential: admin:****$${ADMIN_CRED: -3}"
-            break
-          fi
-          echo "[$(date)] Credential not yet in logs, waiting... (attempt $attempt/15)"
-          sleep 2
-        done
-
-        if [ -z "$ADMIN_CRED" ]; then
-          echo "[$(date)] ⚠️  Could not extract credential from logs; falling back to admin:admin"
-          ADMIN_CRED="admin"
-        fi
-
-        # --- Update Secret Manager with the actual generated credential ---
-        # Note: "stalwart-admin-password" is the secret name in Secret Manager, not a hardcoded secret
-        echo "[$(date)] Updating Secret Manager with admin credential..."
-        TEMP_CRED_FILE="/tmp/stalwart_cred_$RANDOM"
-        echo -n "$ADMIN_CRED" > "$TEMP_CRED_FILE"
-        if gcloud secrets versions add stalwart-admin-password \
-          --data-file="$TEMP_CRED_FILE" --project="$${PROJECT_ID}" >/dev/null 2>&1; then
-          echo "[$(date)] ✅ Secret Manager updated with admin credential"
-          rm -f "$TEMP_CRED_FILE"
+        if echo "$MGMT_TEST" | grep -qi '"status":401\|"error":"unauthorized"'; then
+          echo "[$(date)] ❌ FAILED: Management API returned 401 (authentication failed)"
+          echo "[$(date)] Response: $MGMT_TEST" | head -c 500
+          exit 1
+        elif echo "$MGMT_TEST" | grep -qi '"data"\|"items"'; then
+          echo "[$(date)] ✅ SUCCESS: Management API authenticated (fallback-admin working)"
         else
-          echo "[$(date)] ⚠️  Could not update Secret Manager; MCP server will use configured value"
-          rm -f "$TEMP_CRED_FILE"
+          echo "[$(date)] ⚠️  Uncertain response from Management API (may still be initializing)"
+          echo "[$(date)] Response: $MGMT_TEST" | head -c 500
         fi
 
-        # --- Test Management API authentication with detailed logging ---
-        echo "[$(date)] Testing Management API authentication..."
-        echo "[$(date)] Testing with admin user and extracted credential"
-
-        # Test with verbose output to see HTTP details
-        echo "[$(date)] === HTTP REQUEST DETAILS ==="
-        MGMT_RESPONSE=$(curl -v -u "admin:$ADMIN_CRED" http://localhost:8080/api/principal/ 2>&1)
-        echo "$MGMT_RESPONSE" | head -30 | sed 's/^/['"$(date)"'] /'
-
-        # Extract just the response body for parsing
-        MGMT_BODY=$(echo "$MGMT_RESPONSE" | tail -1)
-        echo "[$(date)] === RESPONSE BODY ==="
-        echo "[$(date)] $MGMT_BODY"
-
-        # Log database principals to see what exists
-        echo "[$(date)] === CHECKING DATABASE STATE ==="
-        docker exec stalwart psql -h 10.64.0.3 -U stalwart -d stalwart -c "SELECT name, type FROM principals LIMIT 5;" 2>&1 | sed 's/^/['"$(date)"'] /' || echo "[$(date)] Could not query database"
-
-        if echo "$MGMT_BODY" | grep -q '"status":401'; then
-          echo "[$(date)] ⚠️  Management API returned 401: Authentication failed"
-        elif echo "$MGMT_BODY" | grep -q '"status":200'; then
-          echo "[$(date)] ✅ Management API authenticated successfully"
-        else
-          echo "[$(date)] Management API unexpected response"
-        fi
-
-        # --- Attempt to reset admin credential via CLI (optional fallback) ---
-        echo "[$(date)] Checking if CLI credential reset is needed..."
-        CLI_RESET_SUCCESS=0
-        # Only attempt if generated credential differs from expected fallback value
-        if [ "$ADMIN_CRED" != "Stalwart123456789" ]; then
-          echo "[$(date)] Generated credential differs from expected; attempting CLI reset (optional)..."
-          for path in stalwart-mail /opt/stalwart-mail/bin/stalwart-mail /usr/local/bin/stalwart-mail; do
-            if docker exec stalwart which $path >/dev/null 2>&1; then
-              echo "[$(date)]   Trying: $path..."
-              if docker exec stalwart $path account update admin --password "$ADMIN_CRED" 2>&1 | head -5; then
-                echo "[$(date)] ✅ Admin credential reset successfully with $path"
-                CLI_RESET_SUCCESS=1
-                break
-              fi
-            fi
-          done || true
-        fi
-
-        # --- Fallback: Delete old admin account after Stalwart initializes database ---
-        if [ $CLI_RESET_SUCCESS -eq 0 ]; then
-          echo "[$(date)] CLI reset failed; waiting for Stalwart to initialize database schema..."
-          apt-get install -y python3-psycopg2 >/dev/null 2>&1
-
-          # Wait for principals table to be created (up to 30 seconds)
-          TABLE_READY=0
-          for attempt in {1..30}; do
-            python3 <<PYTHON_SCRIPT
-import psycopg2
-try:
-    conn = psycopg2.connect(
-        host="10.64.0.3",
-        database="stalwart",
-        user="stalwart",
-        password="$DB_PASSWORD"
-    )
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'principals';")
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    exit(0 if result else 1)
-except:
-    exit(1)
-PYTHON_SCRIPT
-            if [ $? -eq 0 ]; then
-              TABLE_READY=1
-              break
-            fi
-            sleep 1
-          done
-
-          if [ $TABLE_READY -eq 1 ]; then
-            echo "[$(date)] ✅ Database schema ready; attempting to delete old admin account..."
-            python3 <<PYTHON_SCRIPT
-import psycopg2
-from datetime import datetime
-try:
-    conn = psycopg2.connect(
-        host="10.64.0.3",
-        database="stalwart",
-        user="stalwart",
-        password="$DB_PASSWORD"
-    )
-    cur = conn.cursor()
-    cur.execute("DELETE FROM principals WHERE name = 'admin' AND type = 'individual';")
-    deleted_rows = cur.rowcount
-    conn.commit()
-    cur.close()
-    conn.close()
-    if deleted_rows > 0:
-        print(f"[{datetime.now().isoformat()}] ✅ Deleted {deleted_rows} admin account(s)")
-except Exception as e:
-    print(f"[{datetime.now().isoformat()}] ⚠️  Could not delete: {e}")
-PYTHON_SCRIPT
-
-            # Restart container to reload config with fallback-admin active
-            echo "[$(date)] Restarting Stalwart container to activate fallback-admin..."
-            docker restart stalwart
-            sleep 5
-          else
-            echo "[$(date)] ⚠️  Database schema not ready; fallback-admin will be used if needed"
-          fi
-        fi
-
-        # --- Create authentication debug script for manual testing ---
-        mkdir -p /usr/local/bin
-        cat > /usr/local/bin/test-stalwart-auth.sh <<'AUTH_TEST'
-#!/bin/bash
-# Retrieve current admin credential from Secret Manager
-SECRET_ID="stalwart-admin-""password"
-CURRENT_PASS=$(gcloud secrets versions access latest --secret="$SECRET_ID" 2>/dev/null || echo "not-found")
-echo "=== Stalwart Authentication Debug ===" >&2
-echo "[$(date)] Testing Management API with credential from Secret Manager..." >&2
-if [ "$CURRENT_PASS" != "not-found" ]; then
-  curl -v --max-time 5 -u "admin:$CURRENT_PASS" http://localhost:8080/api/principal/ 2>&1
-else
-  echo "ERROR: Could not retrieve credential from Secret Manager" >&2
-  exit 1
-fi
-AUTH_TEST
-        chmod +x /usr/local/bin/test-stalwart-auth.sh
-        echo "[$(date)] ✓ Debug script created: test-stalwart-auth.sh (uses live Secret Manager credential)"
-
-        echo "[$(date)] === STALWART STARTUP DEBUG LOG END ==="
+        echo "[$(date)] === STALWART STARTUP COMPLETE ==="
         exit 0
       fi
       echo "[$(date)]   Attempt $i/60: Stalwart not ready yet, retrying..."
